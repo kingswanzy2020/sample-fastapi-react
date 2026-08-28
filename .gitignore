@@ -1,0 +1,36 @@
+.env
+.docker/
+__pycache__/
+*.pyc
+.pytest_cache/
+frontend/node_modules/
+frontend/build/
+
+# --- terraform -------------------------------------------------------------
+# State holds every resource attribute in plaintext, including anything
+# sensitive. It must never be committed.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl.bak
+crash.log
+crash.*.log
+
+# Saved plans can contain variable values.
+*.tfplan
+tfplan
+
+# Backend config embeds the AWS account ID. backend.hcl.example is committed.
+backend.hcl
+
+# environments/*/terraform.tfvars IS committed on purpose -- it holds
+# environment configuration and no secrets. These patterns catch the ad-hoc
+# override files that tend to accumulate real values.
+*.auto.tfvars
+secrets.tfvars
+*-secrets.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

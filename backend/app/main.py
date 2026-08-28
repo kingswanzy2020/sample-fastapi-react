@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, Depends
 from starlette.requests import Request
 import uvicorn
@@ -46,4 +47,5 @@ app.include_router(
 app.include_router(auth_router, prefix="/api", tags=["auth"])
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", reload=True, port=8888)
+    reload = os.getenv("DEBUG", "false").lower() == "true"
+    uvicorn.run("main:app", host="0.0.0.0", reload=reload, port=8888)

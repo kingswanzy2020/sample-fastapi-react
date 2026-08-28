@@ -1,3 +1,4 @@
+import os
 import jwt
 from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
@@ -7,7 +8,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/token")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-SECRET_KEY = "change_this"
+SECRET_KEY = os.environ["SECRET_KEY"]
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 

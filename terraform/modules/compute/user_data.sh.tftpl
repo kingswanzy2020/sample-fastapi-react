@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+#
+# First-boot provisioning.
+#
+# This script runs exactly once, when the instance is created. It cannot
+# converge, cannot be re-run by Terraform, and changing it does not affect a
+# running instance -- which is why it does as little as possible: install a
+# container runtime, fetch the application's compose files, and install the
+# deploy script that does the actual, repeatable work.
+#
+# `app-deploy` is the re-runnable half. It is what the systemd unit calls, and
+# what you call by hand to ship a new tag.
+
+set -euxo pipefail
+
+exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+
+APP_DIR="${app_directory}"
+
+# --- hostname -------------------------------------------------------------
+hostnamectl set-hostname "${hostname}"
+echo "127.0.1.1 ${hostname}" >> /etc/hosts
+
+# --- base packages --------------------------------------------------------
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y --no-install-recommends \
+  ca-certificates \
+  curl \
+  gnupg \
+  git \
+  unzip \
+  jq
+
+# --- docker engine + compose plugin --------------------------------------
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  > /etc/apt/sources.list.d/docker.list
+
+apt-get update -y
+apt-get install -y --no-install-recommends \
+  docker-ce \
+  docker-ce-cli \
+  containerd.io \
+  docker-buildx-plugin \
+  docker-compose-plugin
+
+systemctl enable --now docker
+usermod -aG docker ubuntu
+
+# Cap log growth. Without this a chatty container fills the root volume and the
+# failure looks like a mysterious application outage.
+cat > /etc/docker/daemon.json <<'JSON'
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+JSON
+systemctl restart docker
+
+# --- aws cli --------------------------------------------------------------
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+unzip -q /tmp/awscliv2.zip -d /tmp
+/tmp/aws/install
+rm -rf /tmp/aws /tmp/awscliv2.zip
+
+# --- ssm agent ------------------------------------------------------------
+# Preinstalled on Ubuntu 22.04 via snap; make sure it is running so Session
+# Manager works without SSH.
+snap start amazon-ssm-agent \
+  || systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service \
+  || true
+
+# --- application directory ------------------------------------------------
+mkdir -p "$APP_DIR"
+chown ubuntu:ubuntu "$APP_DIR"
+printf '%s\n' "${image_tag}" > "$APP_DIR/IMAGE_TAG"
+
+# --- fetch the compose files ----------------------------------------------
+# Images come from ECR; only the compose files are needed here. Cloning is the
+# simplest way to get them onto a fresh box. If the repository is private, this
+# fails harmlessly and you copy the files up yourself -- app-deploy will tell
+# you what is missing.
+%{ if repository_url != null ~}
+if [ ! -f "$APP_DIR/docker-compose.yml" ]; then
+  git clone --depth 1 --branch "${repository_ref}" "${repository_url}" /tmp/app-src \
+    && cp -a /tmp/app-src/. "$APP_DIR/" \
+    && rm -rf /tmp/app-src "$APP_DIR/.git" \
+    || echo "clone failed -- place the compose files in $APP_DIR manually"
+fi
+
+# The override file is development-only: it bind-mounts source directories that
+# do not exist here and swaps in a webpack dev server. Its presence would be
+# picked up automatically by `docker compose`, so it must not be on this box.
+rm -f "$APP_DIR/docker-compose.override.yml"
+%{ endif ~}
+
+chown -R ubuntu:ubuntu "$APP_DIR"
+
+# --- deploy script --------------------------------------------------------
+install -m 0755 /dev/stdin /usr/local/bin/app-deploy <<'DEPLOYSCRIPT'
+${deploy_script}
+DEPLOYSCRIPT
+
+# --- systemd unit ---------------------------------------------------------
+# Two independent layers keep the app running: compose's `restart:
+# unless-stopped` handles a crashed container, and this unit handles a rebooted
+# host. Calling app-deploy rather than `compose up` means a reboot also
+# re-reads secrets, so a rotated credential takes effect.
+cat > /etc/systemd/system/${service_name}.service <<'UNIT'
+[Unit]
+Description=${hostname} application stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=${app_directory}
+ExecStart=/usr/local/bin/app-deploy
+ExecStop=/usr/bin/docker compose -f ${app_directory}/docker-compose.yml -f ${app_directory}/docker-compose.prod.yml down
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable ${service_name}.service
+
+# Deliberately NOT started here.
+#
+# The application secret has no value yet -- Terraform creates the container but
+# never writes the value, so it cannot leak through state. Starting now would
+# fail. Set the secret, then:
+#
+#   sudo systemctl start ${service_name}
+#
+# See the `next_steps` Terraform output.
+
+echo "user-data finished at $(date -Is)" > /var/log/user-data-complete

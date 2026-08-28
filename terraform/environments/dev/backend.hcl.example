@@ -1,0 +1,18 @@
+# Copy to backend.hcl and fill in your account ID, then:
+#   terraform init -backend-config=backend.hcl
+#
+# Or generate it directly from the bootstrap configuration:
+#   cd ../../bootstrap
+#   terraform output -raw dev_backend_config > ../environments/dev/backend.hcl
+#
+# backend.hcl is gitignored because the bucket name embeds the AWS account ID.
+
+bucket = "tfstate-fastapi-react-<ACCOUNT_ID>"
+key    = "dev/terraform.tfstate"
+region = "us-east-1"
+
+encrypt = true
+
+# S3-native state locking via conditional writes. Requires Terraform >= 1.10;
+# replaces the DynamoDB lock table older guides describe.
+use_lockfile = true
