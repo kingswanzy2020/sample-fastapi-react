@@ -1,0 +1,16 @@
+---
+# Values that only exist after `terraform apply` -- an RDS endpoint carries a
+# random component and the RDS-managed secret ARN carries the account ID, so
+# neither can be derived and neither is committed.
+#
+# Generate the real file (gitignored, same reasoning as terraform's
+# backend.hcl):
+#
+#   cd ansible
+#   ansible-playbook playbooks/sync-terraform.yml -e tf_environment=prod
+#
+# Or copy this file to terraform.yml and fill it in by hand from
+#   terraform -chdir=../terraform/environments/prod output
+
+db_host: fastapi-react-prod.abcdefghijkl.us-east-1.rds.amazonaws.com
+db_secret_arn: "arn:aws:secretsmanager:us-east-1:000000000000:secret:rds!db-00000000-0000-0000-0000-000000000000-aBcDeF"

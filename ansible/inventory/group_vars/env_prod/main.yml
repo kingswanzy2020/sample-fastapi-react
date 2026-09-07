@@ -1,0 +1,20 @@
+---
+# prod environment. Mirrors terraform/environments/prod/terraform.tfvars; keep the
+# two in step. Nothing here is secret.
+app_environment: prod
+aws_region: us-east-1
+
+# create_database = true in prod's tfvars, so the application talks to RDS and
+# the postgres container is removed by the generated compose overlay.
+app_use_rds: true
+
+db_name: app
+db_user: appuser
+db_port: 5432
+
+# prod's ECR repositories are IMMUTABLE (ecr_image_tag_mutability in tfvars),
+# so "latest" cannot be re-pushed over an existing tag. Pass the git SHA that
+# CI built:  ansible-playbook playbooks/deploy.yml -e target=env_prod -e app_image_tag=a1b2c3d
+app_image_tag: latest
+
+app_debug: false

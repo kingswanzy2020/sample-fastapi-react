@@ -1,0 +1,26 @@
+---
+# Base packages. jq and unzip are not decoration: the AWS CLI installer ships
+# as a zip, and jq is what the box's own deploy script uses to read secrets.
+common_packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - git
+  - unzip
+  - jq
+  - python3-apt
+  - python3-debian     # ansible.builtin.deb822_repository, used by the docker role
+
+common_timezone: Etc/UTC
+
+# Security updates applied automatically; nothing else. Auto-upgrading every
+# package on a single-instance app server trades one risk for another.
+common_unattended_upgrades: true
+
+# AWS CLI v2. The instance reads its secrets and authenticates to ECR with it,
+# so it is a base dependency rather than part of the app role. v1 from apt is
+# not equivalent -- it is stuck on an old release in the Ubuntu archive.
+common_awscli_url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+
+# Journald grows without bound by default and the root volume is 30 GB.
+common_journald_max_use: 500M

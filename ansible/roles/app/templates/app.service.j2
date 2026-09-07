@@ -1,0 +1,27 @@
+# {{ ansible_managed }}
+[Unit]
+Description={{ project }} {{ app_environment }} application stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+# Runs as root, matching the unit terraform/modules/compute/user_data.sh.tftpl
+# installs. ARCHITECTURE.md §14.6 sketches User={{ app_user }} instead; it buys
+# little here, because {{ app_user }} is in the docker group and anyone who can
+# reach the Docker socket can already start a privileged container. What the
+# service account does buy is file ownership: {{ app_dir }} can be handed to an
+# operator without sudo.
+#
+# The correct pairing for a command that starts things and exits: without
+# RemainAfterExit systemd would consider the unit dead the moment compose
+# returns, and `systemctl status` would read as a failure.
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory={{ app_dir }}
+ExecStart=/usr/bin/docker compose {{ app_compose_file_args }} up -d --remove-orphans
+ExecStop=/usr/bin/docker compose {{ app_compose_file_args }} down
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

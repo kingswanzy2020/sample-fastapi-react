@@ -1,0 +1,61 @@
+---
+# ---------------------------------------------------------------------------
+# Copy the handful of values that only exist after `terraform apply` into
+# group_vars, so the roles never have to guess and this repository never has to
+# store an account ID or a generated hostname.
+#
+#   cd ansible
+#   ansible-playbook playbooks/sync-terraform.yml -e tf_environment=dev
+#
+# Runs entirely on the controller. Reads Terraform outputs; writes nothing to
+# AWS and touches no server. The file it generates is gitignored, for the same
+# reason terraform/environments/*/backend.hcl is.
+# ---------------------------------------------------------------------------
+
+- name: Import Terraform outputs into group_vars
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    tf_environment: dev
+    tf_dir: "{{ playbook_dir }}/../../terraform/environments/{{ tf_environment }}"
+    tf_group_vars: "{{ playbook_dir }}/../inventory/group_vars"
+    tf_vars_file: "{{ tf_group_vars }}/env_{{ tf_environment }}/terraform.yml"
+
+  tasks:
+    - name: Check the Terraform state is initialised
+      ansible.builtin.stat:
+        path: "{{ tf_dir }}/.terraform"
+      register: tf_state_dir
+
+    - name: Fail with the fix rather than a stack trace
+      ansible.builtin.fail:
+        msg: >-
+          {{ tf_dir }} is not initialised. Run
+          `terraform -chdir={{ tf_dir }} init -backend-config=backend.hcl` first
+          (see terraform/environments/{{ tf_environment }}/backend.hcl.example).
+      when: not tf_state_dir.stat.exists
+
+    - name: Read the Terraform outputs
+      ansible.builtin.command:
+        cmd: terraform -chdir={{ tf_dir }} output -json
+      register: tf_output
+      changed_when: false
+
+    - name: Parse the Terraform outputs
+      ansible.builtin.set_fact:
+        tf: "{{ tf_output.stdout | from_json }}"
+
+    - name: Write the generated variables
+      ansible.builtin.template:
+        src: terraform-vars.yml.j2
+        dest: "{{ tf_vars_file }}"
+        mode: "0640"
+
+    - name: Report what was written
+      ansible.builtin.debug:
+        msg: >-
+          Wrote {{ tf_vars_file }} --
+          db_host={{ (tf.db_endpoint.value | default('')) | split(':') | first }},
+          instance={{ tf.instance_id.value | default('(none)') }}

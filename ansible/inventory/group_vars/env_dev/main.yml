@@ -1,0 +1,19 @@
+---
+# dev environment. Mirrors terraform/environments/dev/terraform.tfvars; keep the
+# two in step. Nothing here is secret.
+app_environment: dev
+aws_region: us-east-1
+
+# create_database = true in dev's tfvars, so the application talks to RDS and
+# the postgres container is removed by the generated compose overlay.
+app_use_rds: true
+
+db_name: app
+db_user: appuser
+db_port: 5432
+
+# Tag deployed by a plain `site.yml` run. Override per release rather than
+# editing this file:  ansible-playbook playbooks/deploy.yml -e app_image_tag=a1b2c3d
+app_image_tag: latest
+
+app_debug: false

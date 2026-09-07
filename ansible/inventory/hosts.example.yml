@@ -1,0 +1,19 @@
+---
+# Static fallback inventory.
+#
+# Copy to hosts.yml (gitignored) and fill in the address when you cannot use the
+# dynamic inventory -- no AWS credentials on the controller, a box that
+# Terraform did not create, or a local VM.
+#
+#   cp inventory/hosts.example.yml inventory/hosts.yml
+#   ansible-playbook -i inventory/hosts.yml playbooks/site.yml
+#
+# Get the address from Terraform rather than the console:
+#   terraform -chdir=../terraform/environments/dev output -raw instance_public_ip
+all:
+  children:
+    env_dev:
+      hosts:
+        fastapi-react-dev-app:
+          ansible_host: 203.0.113.10        # RFC 5737 documentation address -- replace
+          ansible_user: ubuntu

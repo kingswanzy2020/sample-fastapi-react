@@ -1,0 +1,135 @@
+---
+# ---------------------------------------------------------------------------
+# Base host configuration: packages, time, unattended security updates, log
+# caps, AWS CLI.
+#
+# Everything here is expressed as desired state, so a second run reports
+# changed=0. That is the whole difference between this and the first-boot
+# script in terraform/modules/compute/user_data.sh.tftpl, which does the same
+# work once and can never be re-applied.
+# ---------------------------------------------------------------------------
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600      # skips a needless apt-get update on re-runs
+  tags: [common, packages]
+
+- name: Set the timezone
+  community.general.timezone:
+    name: "{{ common_timezone }}"
+  tags: [common]
+
+# --- unattended security updates -------------------------------------------
+
+- name: Install unattended-upgrades
+  ansible.builtin.apt:
+    name:
+      - unattended-upgrades
+      - update-notifier-common
+    state: present
+  when: common_unattended_upgrades
+  tags: [common, packages]
+
+- name: Configure unattended-upgrades
+  ansible.builtin.template:
+    src: 20auto-upgrades.j2
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+  when: common_unattended_upgrades
+  tags: [common]
+
+- name: Enable the unattended-upgrades timer
+  ansible.builtin.systemd_service:
+    name: unattended-upgrades
+    state: started
+    enabled: true
+  when: common_unattended_upgrades
+  tags: [common]
+
+# --- logs -------------------------------------------------------------------
+
+- name: Create the journald drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [common]
+
+- name: Cap journald disk usage
+  ansible.builtin.template:
+    src: journald-size.conf.j2
+    dest: /etc/systemd/journald.conf.d/99-size.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart journald
+  tags: [common]
+
+# --- aws cli v2 -------------------------------------------------------------
+#
+# Three guarded steps rather than one shell pipe. `creates:` on the unarchive
+# and the installer is what makes the sequence idempotent -- without it the
+# installer runs on every play and reports changed forever.
+
+- name: Check for the AWS CLI
+  ansible.builtin.stat:
+    path: /usr/local/bin/aws
+  register: common_awscli_bin
+  tags: [common, awscli]
+
+- name: Install the AWS CLI v2
+  when: not common_awscli_bin.stat.exists
+  tags: [common, awscli]
+  block:
+    - name: Download the AWS CLI installer
+      ansible.builtin.get_url:
+        url: "{{ common_awscli_url }}"
+        dest: /tmp/awscliv2.zip
+        mode: "0644"
+
+    # Skipped under --check for a reason that is easy to miss: get_url does not
+    # download in check mode, so this would fail on "source does not exist"
+    # rather than reporting the change it would make. The command below already
+    # skips itself in check mode.
+    - name: Unpack the AWS CLI installer
+      ansible.builtin.unarchive:
+        src: /tmp/awscliv2.zip
+        dest: /tmp
+        remote_src: true
+        creates: /tmp/aws/install
+      when: not ansible_check_mode
+
+    - name: Run the AWS CLI installer
+      ansible.builtin.command:
+        cmd: /tmp/aws/install
+        creates: /usr/local/bin/aws
+
+  always:
+    - name: Remove the AWS CLI installer files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/awscliv2.zip
+        - /tmp/aws
+
+# --- ssm agent --------------------------------------------------------------
+#
+# Preinstalled on Ubuntu 22.04 as a snap. Session Manager is the access path
+# when ssh_allowed_cidrs is empty, which is the shipped default, so it is worth
+# asserting it is actually running rather than assuming.
+
+- name: Ensure the SSM agent is running
+  ansible.builtin.systemd_service:
+    name: snap.amazon-ssm-agent.amazon-ssm-agent.service
+    state: started
+    enabled: true
+  failed_when: false            # not present on non-EC2 hosts; not fatal there
+  tags: [common, ssm]

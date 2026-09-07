@@ -1,0 +1,22 @@
+---
+# Only needed when app_secret_source is set to "vault" -- the fallback for a
+# host with no AWS identity. The AWS path is preferred: it keeps no ciphertext
+# in git and needs no vault password distributed to anyone who deploys.
+#
+# Create the real file (gitignored) with encrypted values, never plaintext:
+#
+#   cd ansible
+#   ansible-vault encrypt_string "$(openssl rand -hex 32)"          --name vault_secret_key
+#   ansible-vault encrypt_string "$(openssl rand -base64 32 | tr -d '/+=')" --name vault_postgres_password
+#
+# Paste the output into inventory/group_vars/all/vault.yml, then run with
+# --ask-vault-pass, or write the password to ansible/.vault-pass (gitignored)
+# and uncomment vault_password_file in ansible.cfg.
+
+vault_secret_key: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  00000000000000000000000000000000000000000000000000000000000000000000000000000000
+
+vault_postgres_password: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  00000000000000000000000000000000000000000000000000000000000000000000000000000000

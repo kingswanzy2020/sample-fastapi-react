@@ -1,0 +1,20 @@
+---
+# ---------------------------------------------------------------------------
+# Ship a new image. Skips the base host and the container runtime entirely --
+# they do not change between releases.
+#
+#   cd ansible
+#   ansible-playbook playbooks/deploy.yml -e app_image_tag=$(git rev-parse --short HEAD)
+#
+# Equivalent to `ansible-playbook playbooks/site.yml --tags deploy`, kept as its
+# own entry point because this is the command CI calls.
+# ---------------------------------------------------------------------------
+
+- name: Deploy the application
+  hosts: "{{ target | default('env_dev') }}"
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: app
+      tags: [app]

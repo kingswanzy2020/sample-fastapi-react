@@ -1,0 +1,13 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# Fires when .env, a compose file or the unit changed. `restart` runs the
+# unit's ExecStop then ExecStart, so the stack comes back with the new
+# environment -- which is how a rotated secret actually reaches the containers.
+- name: Restart application
+  ansible.builtin.systemd_service:
+    name: "{{ app_service_name }}"
+    state: restarted
+    daemon_reload: true

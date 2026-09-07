@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+#
+# Applied only when the database is RDS. docker-compose.yml runs Postgres in a
+# container and makes backend and migrate wait for it; with RDS that container
+# should not exist at all, so this overlay removes the service and both
+# dependencies on it.
+#
+# `!reset null` needs Docker Compose v2.24 or newer -- the docker role installs
+# docker-compose-plugin, which is well past that.
+services:
+  postgres: !reset null
+
+  backend:
+    depends_on:
+      postgres: !reset null
+
+  migrate:
+    depends_on:
+      postgres: !reset null

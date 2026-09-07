@@ -1,0 +1,150 @@
+---
+# ---------------------------------------------------------------------------
+# The application itself: service account, directories, configuration, the
+# systemd unit that survives a reboot, and the deploy.
+#
+# This role converges what terraform/modules/compute/user_data.sh.tftpl set up
+# once at first boot. Where the two disagree, this role wins -- that is the
+# point of handing the box to Ansible. The differences are called out inline.
+# ---------------------------------------------------------------------------
+
+- name: Check that the environment is fully specified
+  ansible.builtin.assert:
+    that:
+      - app_environment is defined
+      - aws_region is defined
+      - app_image_tag is defined
+      - not app_use_rds or (db_host is defined and db_host | length > 0)
+      - not app_use_rds or (db_secret_arn is defined and db_secret_arn | length > 0)
+    fail_msg: >-
+      Missing environment values. db_host and db_secret_arn only exist after
+      `terraform apply`; generate them with
+      `ansible-playbook playbooks/sync-terraform.yml
+      -e tf_environment={{ app_environment | default('dev') }}`,
+      or copy inventory/group_vars/env_*/terraform.yml.example and fill it in.
+    quiet: true
+  tags: [always]
+
+# --- service account and directories ---------------------------------------
+
+- name: Create the application group
+  ansible.builtin.group:
+    name: "{{ app_group }}"
+    state: present
+  tags: [app, config]
+
+- name: Create the application user
+  ansible.builtin.user:
+    name: "{{ app_user }}"
+    group: "{{ app_group }}"
+    groups: [docker]          # the docker group exists because the docker role ran first
+    append: true
+    shell: /bin/bash
+    create_home: true
+    state: present
+  tags: [app, config]
+
+- name: Create the application directory
+  ansible.builtin.file:
+    path: "{{ app_dir }}"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0750"
+  tags: [app, config]
+
+# --- compose files ----------------------------------------------------------
+
+- name: Copy the compose files
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/{{ item }}"
+    dest: "{{ app_dir }}/{{ item }}"
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0640"
+  loop: "{{ app_compose_files }}"
+  notify: Restart application
+  tags: [app, config, deploy]
+
+# docker-compose.override.yml bind-mounts ./backend and ./frontend and swaps in
+# a webpack dev server. `docker compose` loads it automatically whenever it is
+# present, so leaving a stray copy on the server silently turns production into
+# a broken development stack.
+- name: Remove the development compose override
+  ansible.builtin.file:
+    path: "{{ app_dir }}/docker-compose.override.yml"
+    state: absent
+  notify: Restart application
+  tags: [app, config, deploy]
+
+- name: Generate the RDS compose overlay
+  ansible.builtin.template:
+    src: docker-compose.aws.yml.j2
+    dest: "{{ app_dir }}/docker-compose.aws.yml"
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0640"
+  when: app_use_rds
+  notify: Restart application
+  tags: [app, config, deploy]
+
+- name: Remove the RDS compose overlay when the database is a container
+  ansible.builtin.file:
+    path: "{{ app_dir }}/docker-compose.aws.yml"
+    state: absent
+  when: not app_use_rds
+  notify: Restart application
+  tags: [app, config, deploy]
+
+# --- configuration ----------------------------------------------------------
+
+- name: Resolve secrets and registry
+  ansible.builtin.include_tasks: secrets.yml
+  tags: [app, config, deploy]
+
+- name: Render the environment file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ app_dir }}/.env"
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0640"              # secrets: owner and the service group only
+  no_log: true                # keeps the values out of the run output and CI logs
+  notify: Restart application
+  tags: [app, config, deploy]
+
+# The box's own app-deploy script reads this file to know what to start. Keeping
+# it current means the two deploy paths agree about what is running.
+- name: Record the deployed image tag
+  ansible.builtin.copy:
+    content: "{{ app_image_tag }}\n"
+    dest: "{{ app_dir }}/IMAGE_TAG"
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0640"
+  tags: [app, config, deploy]
+
+# --- systemd ----------------------------------------------------------------
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: app.service.j2
+    dest: "/etc/systemd/system/{{ app_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+  tags: [app, config]
+
+- name: Enable the application service
+  ansible.builtin.systemd_service:
+    name: "{{ app_service_name }}"
+    enabled: true
+    daemon_reload: true
+  tags: [app, config]
+
+# --- deploy -----------------------------------------------------------------
+
+- name: Deploy the application
+  ansible.builtin.include_tasks: deploy.yml
+  tags: [app, deploy]

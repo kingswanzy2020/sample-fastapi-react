@@ -1,0 +1,47 @@
+---
+# Dynamic inventory -- the instance is found by the tags Terraform already sets,
+# never by a hardcoded IP.
+#
+# terraform/environments/*/main.tf sets these through the provider's
+# default_tags block, so Project and Environment are on every resource. That
+# makes the same labels do double duty: cost allocation in AWS, service
+# discovery here.
+#
+# Prove it resolves before running anything:
+#   ansible-inventory -i inventory/aws_ec2.yml --graph
+#
+# Requires AWS credentials on the *controller* (the machine running Ansible) --
+# the same ones used for `terraform apply`. The instance's own IAM role is used
+# for the calls that happen on the box (Secrets Manager, ECR), not for this.
+plugin: amazon.aws.aws_ec2
+
+regions:
+  # Matches aws_region in terraform/environments/{dev,prod}/terraform.tfvars.
+  - us-east-1
+
+filters:
+  tag:Project: fastapi-react        # matches var.project
+  tag:ManagedBy: terraform
+  instance-state-name: running
+
+# One inventory covers every environment; the group keeps them apart. Target a
+# single environment with the play's `target` variable:
+#   ansible-playbook playbooks/site.yml -e target=env_prod
+keyed_groups:
+  # ec2_tags, not tags: amazon.aws deprecated the bare `tags` hostvar and
+  # removes it in a release after 2026-12-01. Needs amazon.aws >= 11.
+  - key: ec2_tags.Environment
+    prefix: env
+    separator: "_"
+
+# Readable host names -- "fastapi-react-dev-app" rather than an IP that changes
+# meaning between runs.
+hostnames:
+  - tag:Name
+
+compose:
+  ansible_host: public_ip_address
+
+# Everything useful about the instance, available as hostvars for templates and
+# debugging (instance_id is what `aws ssm start-session --target` wants).
+strict: false

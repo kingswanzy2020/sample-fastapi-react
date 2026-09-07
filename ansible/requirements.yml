@@ -1,0 +1,19 @@
+---
+# Needs ansible-core >= 2.16 on the controller: the roles use
+# ansible.builtin.systemd_service (2.16) and ansible.builtin.deb822_repository
+# (2.15). The dynamic inventory additionally needs boto3/botocore there.
+#
+# Install with:  ansible-galaxy collection install -r requirements.yml
+#
+# All three ship with the `ansible` package (not ansible-core). This file is
+# what pins them for a CI runner or a controller that installed ansible-core
+# alone.
+collections:
+  - name: amazon.aws
+    version: ">=11.0.0"    # aws_ec2 inventory plugin, with the ec2_tags hostvar
+  - name: community.docker
+    version: ">=4.0.0"     # docker_compose_v2 module
+  - name: community.general
+    version: ">=8.0.0"     # timezone module used by the common role
+  - name: ansible.posix
+    version: ">=1.5.0"     # profile_tasks callback enabled in ansible.cfg

@@ -1,0 +1,21 @@
+---
+extends: default
+
+rules:
+  line-length:
+    max: 100
+    allow-non-breakable-words: true
+  comments:
+    min-spaces-from-content: 1     # ansible-lint's own convention
+  braces:
+    max-spaces-inside: 1           # "{{ var }}", the Ansible spelling
+  octal-values:
+    forbid-implicit-octal: true    # mode: 0640 must be quoted, or it is 416
+  truthy:
+    allowed-values: ["true", "false"]
+  # ansible-lint requires this rule off before it will offer fix mode, and
+  # its own YAML style puts block comments at the parent's indentation.
+  comments-indentation: false
+
+ignore: |
+  .collections/

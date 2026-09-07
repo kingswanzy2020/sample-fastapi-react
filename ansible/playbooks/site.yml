@@ -1,0 +1,25 @@
+---
+# ---------------------------------------------------------------------------
+# Full convergence: base host, container runtime, application.
+#
+#   cd ansible
+#   ansible-playbook playbooks/site.yml                      # dev
+#   ansible-playbook playbooks/site.yml -e target=env_prod   # prod
+#
+# Safe to run repeatedly. A second run against an unchanged environment must
+# report changed=0; anything still reporting changed is a task that is doing
+# rather than declaring.
+# ---------------------------------------------------------------------------
+
+- name: Configure the application server
+  hosts: "{{ target | default('env_dev') }}"
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: common
+      tags: [common]
+    - role: docker
+      tags: [docker]
+    - role: app
+      tags: [app]

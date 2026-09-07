@@ -1,0 +1,59 @@
+---
+# ---------------------------------------------------------------------------
+# Pull and converge. This is what `--tags deploy` runs on a routine release:
+# no package installation, just new images and a restart.
+# ---------------------------------------------------------------------------
+
+- name: Authenticate to ECR
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail &&
+      /usr/local/bin/aws ecr get-login-password --region {{ aws_region | quote }}
+      | docker login --username AWS --password-stdin {{ app_registry_host | quote }}
+    executable: /bin/bash
+  register: app_ecr_login
+  changed_when: false         # authenticating is not a state change
+  check_mode: false           # ...and skipping it would make a --check pull fail
+  no_log: true                # the token is a 12-hour credential
+
+# `config --quiet` parses the merged result of every -f file, so a bad overlay
+# fails here with a parse error instead of halfway through a deploy.
+- name: Validate the merged compose configuration
+  ansible.builtin.command:
+    cmd: docker compose {{ app_compose_file_args }} config --quiet
+    chdir: "{{ app_dir }}"
+  changed_when: false
+  check_mode: false
+
+- name: Converge the running stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ app_dir }}"
+    files: "{{ app_compose_active_files }}"
+    state: present
+    pull: always              # a mutable tag can move; always ask the registry
+    remove_orphans: true
+  register: app_compose_result
+
+- name: Prune images older than {{ app_prune_until }}
+  ansible.builtin.command:
+    cmd: docker image prune -af --filter until={{ app_prune_until }}
+  changed_when: false         # housekeeping, not application state
+  when: app_prune_images
+
+# --- verification -----------------------------------------------------------
+#
+# Exercises the same path a browser takes: the frontend container's nginx, its
+# /api proxy, and the backend behind it. A green deploy that cannot serve /api
+# is not a green deploy.
+
+- name: Wait for the application to answer
+  ansible.builtin.uri:
+    url: "{{ app_health_url }}"
+    status_code: [200]
+  register: app_health
+  retries: "{{ app_health_retries }}"
+  delay: "{{ app_health_delay }}"
+  until: app_health.status == 200
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode

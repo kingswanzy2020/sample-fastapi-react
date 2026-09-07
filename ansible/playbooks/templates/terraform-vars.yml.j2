@@ -1,0 +1,16 @@
+---
+# {{ ansible_managed }} by playbooks/sync-terraform.yml from
+# terraform/environments/{{ tf_environment }}. Gitignored: the ARN carries the
+# AWS account ID. Regenerate rather than editing.
+{% set db_endpoint = tf.db_endpoint.value | default('') %}
+db_host: "{{ (db_endpoint | split(':') | first) if db_endpoint else '' }}"
+db_secret_arn: "{{ tf.db_secret_arn.value | default('') }}"
+
+# Not required -- the app role derives the registry from the instance's own
+# account ID -- but pinning it here saves an sts call and documents the target.
+app_registry_prefix: "{{ tf.ecr_registry_prefix.value | default('') }}"
+
+# For the record, so `ansible-inventory --graph` output can be sanity-checked
+# against what Terraform believes it created.
+tf_instance_id: "{{ tf.instance_id.value | default('') }}"
+tf_instance_public_ip: "{{ tf.instance_public_ip.value | default('') }}"

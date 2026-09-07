@@ -34,3 +34,25 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+
+# --- ansible ---------------------------------------------------------------
+# Vault password. Nothing that can decrypt a vaulted value belongs in git.
+ansible/.vault-pass
+ansible/vault-password*
+
+# Encrypted variable files are safe to commit in principle, but committing
+# ciphertext plus a widely-distributed password is not. vault.yml.example is
+# committed and shows the shape.
+ansible/inventory/group_vars/**/vault.yml
+
+# Generated from `terraform output` by playbooks/sync-terraform.yml. Carries the
+# AWS account ID in an ARN, same reasoning as terraform's backend.hcl.
+# terraform.yml.example is committed.
+ansible/inventory/group_vars/**/terraform.yml
+
+# Static inventory with a real address. hosts.example.yml is committed.
+ansible/inventory/hosts.yml
+
+# Collections installed with `ansible-galaxy collection install -r requirements.yml -p ./.collections`
+ansible/.collections/
+ansible/*.retry

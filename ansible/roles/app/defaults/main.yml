@@ -1,0 +1,35 @@
+---
+# Left empty on purpose: it is derived on the instance from its own account ID
+# (aws sts get-caller-identity) plus the region, which is exactly how the ECR
+# module builds it -- "<account>.dkr.ecr.<region>.amazonaws.com/<project>-<env>".
+# Deriving it beats committing an account ID to this repository. Set it here to
+# override.
+app_registry_prefix: ""
+
+# Broker URL is a service name on the compose network, not a host of its own:
+# redis is a container in the same project.
+app_celery_broker_url: redis://redis:6379/0
+
+# Images accumulate on a 30 GB root volume; a week of history is enough to roll
+# back to yesterday's tag without an ECR pull.
+app_prune_images: true
+app_prune_until: 168h
+
+# Post-deploy smoke test. Runs on the instance against the published port, so
+# it exercises the frontend container's nginx and its /api proxy to the backend
+# -- the same path a browser takes.
+app_health_url: http://127.0.0.1/api/v1
+app_health_retries: 20
+app_health_delay: 5
+
+# The overlay only exists when the database is RDS, so the -f list is computed
+# rather than fixed. Both the systemd unit and the deploy tasks read these, so
+# the boot path and the Ansible path always start the identical set of files.
+app_compose_active_files: >-
+  {{ app_compose_files + (['docker-compose.aws.yml'] if app_use_rds else []) }}
+app_compose_file_args: >-
+  {{ app_compose_active_files | map('regex_replace', '^', '-f ') | join(' ') }}
+
+# Registry hostname without the repository path -- what `docker login` takes.
+# Evaluated lazily, so it picks up the prefix the app role derives at run time.
+app_registry_host: "{{ app_registry_prefix | split('/') | first }}"
