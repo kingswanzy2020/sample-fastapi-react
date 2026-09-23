@@ -34,6 +34,16 @@
     remove_orphans: true
   register: app_compose_result
 
+# Runs every deploy, not just the first: initial_data.py checks for the
+# superuser before creating it, so this is a no-op once it exists. Not
+# check_mode: false -- a --check run should not create real data.
+- name: Seed the superuser
+  ansible.builtin.command:
+    cmd: docker compose {{ app_compose_file_args }} run --rm backend python3 app/initial_data.py
+    chdir: "{{ app_dir }}"
+  register: app_seed_result
+  changed_when: "'Creating superuser' in app_seed_result.stdout"
+
 - name: Prune images older than {{ app_prune_until }}
   ansible.builtin.command:
     cmd: docker image prune -af --filter until={{ app_prune_until }}
