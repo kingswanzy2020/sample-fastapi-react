@@ -199,11 +199,6 @@ docker compose "$${COMPOSE_FILES[@]}" pull --quiet
 log "starting services"
 docker compose "$${COMPOSE_FILES[@]}" up -d --remove-orphans
 
-# Runs every deploy, not just the first: initial_data.py checks for the
-# superuser before creating it, so this is a no-op once it exists.
-log "seeding superuser"
-docker compose "$${COMPOSE_FILES[@]}" run --rm backend python3 app/initial_data.py
-
 log "pruning old images"
 docker image prune -af --filter "until=168h" >/dev/null 2>&1 || true
 
