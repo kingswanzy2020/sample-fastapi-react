@@ -5,6 +5,7 @@ import uvicorn
 
 from app.api.api_v1.routers.users import users_router
 from app.api.api_v1.routers.auth import auth_router
+from app.api.api_v1.routers.health import health_router
 from app.core import config
 from app.db.session import SessionLocal
 from app.core.auth import get_current_active_user
@@ -45,6 +46,9 @@ app.include_router(
     dependencies=[Depends(get_current_active_user)],
 )
 app.include_router(auth_router, prefix="/api", tags=["auth"])
+# Probes are mounted without the users_router auth dependency on purpose:
+# kubelet and docker HEALTHCHECK have no credentials.
+app.include_router(health_router, prefix="/api/v1", tags=["health"])
 
 if __name__ == "__main__":
     reload = os.getenv("DEBUG", "false").lower() == "true"

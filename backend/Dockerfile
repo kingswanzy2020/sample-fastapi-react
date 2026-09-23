@@ -27,7 +27,7 @@ ENV PYTHONPATH=. PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 EXPOSE 8888
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD curl -fsS http://localhost:8888/api/v1 || exit 1
+  CMD curl -fsS http://localhost:8888/api/v1/health/live || exit 1
 
 CMD ["gunicorn", "app.main:app", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
