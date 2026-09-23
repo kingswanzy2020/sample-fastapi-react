@@ -57,10 +57,14 @@ resource "aws_security_group" "db" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "postgres" {
-  for_each = toset(var.allowed_security_group_ids)
+  # Keyed by index, not by the security group ID itself: the ID is a
+  # resource attribute that's unknown until apply on a first-time plan
+  # (e.g. module.compute.web_security_group_id before compute exists), and
+  # for_each keys must be known at plan time even when their values aren't.
+  for_each = { for idx, sg_id in var.allowed_security_group_ids : tostring(idx) => sg_id }
 
   security_group_id            = aws_security_group.db.id
-  description                  = "PostgreSQL from ${each.value}"
+  description                  = "PostgreSQL from allowed security group ${each.key}"
   referenced_security_group_id = each.value
   from_port                    = 5432
   to_port                      = 5432
