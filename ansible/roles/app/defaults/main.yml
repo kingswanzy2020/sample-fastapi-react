@@ -17,8 +17,9 @@ app_prune_until: 168h
 
 # Post-deploy smoke test. Runs on the instance against the published port, so
 # it exercises the frontend container's nginx and its /api proxy to the backend
-# -- the same path a browser takes.
-app_health_url: http://127.0.0.1/api/v1
+# -- the same path a browser takes. The readiness endpoint also checks Postgres
+# and redis, so a deploy with a dead backing service fails here, not later.
+app_health_url: http://127.0.0.1/api/v1/health/ready
 app_health_retries: 20
 app_health_delay: 5
 
