@@ -1,2 +1,2 @@
-export const BASE_URL: string = 'http://localhost:8000';
+// eslint-disable-next-line import/prefer-default-export
 export const BACKEND_URL: string = '/api/v1';
