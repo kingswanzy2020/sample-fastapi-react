@@ -54,10 +54,13 @@ resource "aws_subnet" "public" {
   # The application instance needs a public IP to be reachable without an ALB.
   map_public_ip_on_launch = true
 
-  tags = {
-    Name = "${local.name}-public-${each.key}"
-    Tier = "public"
-  }
+  tags = merge(
+    {
+      Name = "${local.name}-public-${each.key}"
+      Tier = "public"
+    },
+    var.public_subnet_tags,
+  )
 }
 
 resource "aws_route_table" "public" {
@@ -98,10 +101,13 @@ resource "aws_subnet" "private" {
   cidr_block        = each.value
   availability_zone = each.key
 
-  tags = {
-    Name = "${local.name}-private-${each.key}"
-    Tier = "private"
-  }
+  tags = merge(
+    {
+      Name = "${local.name}-private-${each.key}"
+      Tier = "private"
+    },
+    var.private_subnet_tags,
+  )
 }
 
 resource "aws_route_table" "private" {

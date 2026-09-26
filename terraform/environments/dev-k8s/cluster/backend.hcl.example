@@ -1,0 +1,15 @@
+# Copy to backend.hcl and fill in your account ID, then:
+#   terraform init -backend-config=backend.hcl
+#
+# Same state bucket as environments/dev (created by ../../../bootstrap), its
+# own key. backend.hcl is gitignored because the bucket name embeds the AWS
+# account ID.
+
+bucket = "tfstate-fastapi-react-<ACCOUNT_ID>"
+key    = "dev-k8s/cluster/terraform.tfstate"
+region = "us-east-1"
+
+encrypt = true
+
+# S3-native state locking. Requires Terraform >= 1.10.
+use_lockfile = true

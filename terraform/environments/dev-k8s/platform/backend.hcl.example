@@ -1,0 +1,10 @@
+# Copy to backend.hcl and fill in your account ID, then:
+#   terraform init -backend-config=backend.hcl
+
+bucket = "tfstate-fastapi-react-<ACCOUNT_ID>"
+key    = "dev-k8s/platform/terraform.tfstate"
+region = "us-east-1"
+
+encrypt = true
+
+use_lockfile = true

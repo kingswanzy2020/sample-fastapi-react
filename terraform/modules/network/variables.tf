@@ -52,3 +52,19 @@ variable "enable_nat_gateway" {
   type        = bool
   default     = false
 }
+
+variable "public_subnet_tags" {
+  description = <<-EOT
+    Extra tags for the public subnets. EKS sets kubernetes.io/role/elb = 1 here
+    so the AWS Load Balancer Controller can discover where to put internet-facing
+    ALBs.
+  EOT
+  type        = map(string)
+  default     = {}
+}
+
+variable "private_subnet_tags" {
+  description = "Extra tags for the private subnets (EKS: kubernetes.io/role/internal-elb = 1)."
+  type        = map(string)
+  default     = {}
+}
