@@ -1,0 +1,50 @@
+{{- /*
+Autoscaling and disruption budgets.
+
+The HPA scales on CPU as a percentage of the *request*, so it depends on
+backend.resources.requests.cpu being set and on metrics-server running
+(scripts/k8s/addons.sh locally, an EKS add-on on AWS).
+
+The PDBs stop voluntary disruptions -- node drains, cluster upgrades -- from
+taking the last replica (§18.4). They are never enabled with a single replica:
+minAvailable: 1 of 1 would block every eviction.
+*/ -}}
+{{- if .Values.backend.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend
+  labels:
+    {{- include "fastapi-react.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: {{ .Values.backend.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.backend.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.backend.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- range $component := list "backend" "web" }}
+{{- $cfg := index $.Values $component }}
+{{- if $cfg.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $component }}
+  labels:
+    {{- include "fastapi-react.labels" $ | nindent 4 }}
+spec:
+  minAvailable: {{ $cfg.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "fastapi-react.selectorLabels" (dict "ctx" $ "component" $component) | nindent 6 }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,72 @@
+{{- /*
+Alembic migrations as a Helm hook Job (§17.3).
+
+A Job, not an initContainer: an initContainer runs once per pod, so three
+replicas would run three concurrent `alembic upgrade head` against one
+database. A hook Job runs exactly once, and if it fails the release fails
+before any Deployment changes (§18.6).
+
+post-install, not pre-install: on a fresh install nothing exists yet -- not
+the Secret this Job reads, not the local Postgres, not the ExternalSecret on
+EKS. After install, backend pods start against an empty schema; /health/ready
+only runs SELECT 1, so they go ready and the Job fills in the tables moments
+later. On upgrades it runs pre-upgrade, against the Secret already in the
+cluster, so the schema moves before the new code rolls out.
+
+The wait loop covers the first seconds of a fresh local install, while the
+Postgres StatefulSet initialises.
+*/ -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "fastapi-react.fullname" . }}-migrate
+  labels:
+    {{- include "fastapi-react.componentLabels" (dict "ctx" . "component" "migrate") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    # Replace the previous run's Job, but leave a failed one in place so
+    # `kubectl logs job/<release>-migrate` still works.
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrate.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "fastapi-react.componentLabels" (dict "ctx" . "component" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "fastapi-react.fullname" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "fastapi-react.appPodSecurityContext" . | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "fastapi-react.image" (dict "ctx" . "name" "backend") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until pg_isready -q -d "$DATABASE_URL"; do
+                echo "waiting for the database to accept connections"
+                sleep 2
+              done
+              exec "$@"
+            - --
+          args:
+            {{- toYaml .Values.migrate.args | nindent 12 }}
+          securityContext:
+            {{- include "fastapi-react.appContainerSecurityContext" . | nindent 12 }}
+          envFrom:
+            {{- include "fastapi-react.appEnvFrom" . | nindent 12 }}
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

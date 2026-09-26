@@ -1,0 +1,16 @@
+# Local kind cluster -- Docker Desktop (context docker-desktop) or standalone
+# kind (context kind-fastapi-react). See docs/ARCHITECTURE.md §16-17.
+#
+# Deploy with scripts/k8s/deploy-local.sh, which builds the images, generates
+# deploy/kind/secrets.local.yaml on first run and passes both files.
+
+image:
+  # Matches docker-compose.yml's default REGISTRY, so these are the same image
+  # names `docker compose build` produces.
+  registry: fastapi-react
+
+postgresql:
+  enabled: true
+
+ingress:
+  className: traefik

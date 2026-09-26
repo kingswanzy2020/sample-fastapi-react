@@ -1,0 +1,106 @@
+{{- /*
+FastAPI (gunicorn + uvicorn workers, from backend/Dockerfile's CMD).
+
+The Service MUST be named "backend": the web image's nginx.conf proxies /api
+to http://backend:8888, the same name compose uses.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels:
+    {{- include "fastapi-react.labels" . | nindent 4 }}
+  {{- if eq .Values.ingress.className "alb" }}
+  annotations:
+    # The ALB's own health check mirrors the readiness probe, so the load
+    # balancer and the Service agree on which pods may take traffic.
+    alb.ingress.kubernetes.io/healthcheck-path: /api/v1/health/ready
+  {{- end }}
+spec:
+  selector:
+    {{- include "fastapi-react.selectorLabels" (dict "ctx" . "component" "backend") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8888
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    {{- include "fastapi-react.componentLabels" (dict "ctx" . "component" "backend") | nindent 4 }}
+spec:
+  {{- if not .Values.backend.autoscaling.enabled }}
+  # Left unset when the HPA is on, so every `helm upgrade` does not reset the
+  # replica count the autoscaler chose.
+  replicas: {{ .Values.backend.replicaCount }}
+  {{- end }}
+  # A failed rollout stalls with the old ReplicaSet still serving, instead of
+  # replacing working pods with broken ones (§17.3, §18.2).
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  # How long `kubectl rollout status` waits before declaring the rollout failed.
+  progressDeadlineSeconds: 120
+  selector:
+    matchLabels:
+      {{- include "fastapi-react.selectorLabels" (dict "ctx" . "component" "backend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fastapi-react.componentLabels" (dict "ctx" . "component" "backend") | nindent 8 }}
+      annotations:
+        # A config- or secret-only change must still roll the pods: env vars
+        # are read once, at container start.
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "fastapi-react.fullname" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "fastapi-react.appPodSecurityContext" . | nindent 8 }}
+      {{- include "fastapi-react.spreading" (dict "ctx" . "component" "backend") | nindent 6 }}
+      containers:
+        - name: backend
+          image: {{ include "fastapi-react.image" (dict "ctx" . "name" "backend") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- include "fastapi-react.appContainerSecurityContext" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8888
+          envFrom:
+            {{- include "fastapi-react.appEnvFrom" . | nindent 12 }}
+          # Readiness checks the dependencies (Postgres and the Redis broker,
+          # each bounded at 2s in routers/health.py); failing it only removes
+          # the pod from the Service. timeoutSeconds sits just outside that
+          # bound, so a hung dependency yields a clean 503, not a probe timeout.
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # Liveness checks nothing external. If it tested the database, a
+          # Postgres blip would restart every backend pod at once.
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health/live
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

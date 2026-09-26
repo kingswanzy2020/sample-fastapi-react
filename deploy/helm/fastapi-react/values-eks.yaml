@@ -1,0 +1,38 @@
+# EKS validation run (docs/ARCHITECTURE.md §22).
+#
+# Account-specific values are deliberately NOT here -- they come from Terraform
+# outputs at deploy time, so nothing in git carries an account ID or ARN:
+#
+#   cd terraform/environments/dev-k8s/cluster
+#   helm upgrade --install fastapi-react ../../../../deploy/helm/fastapi-react \
+#     -f ../../../../deploy/helm/fastapi-react/values-eks.yaml \
+#     $(terraform output -raw helm_set_flags) \
+#     --set image.tag=sha-<git sha> \
+#     -n fastapi-react --create-namespace --atomic --wait --timeout 10m
+#
+# helm_set_flags supplies image.registry, database.host and
+# externalSecret.dbSecretName.
+
+postgresql:
+  enabled: false
+
+database:
+  port: 5432
+  name: app
+
+externalSecret:
+  enabled: true
+  region: us-east-1
+  # Created empty by the cluster root; set its value out of band (see the
+  # set_app_secret_command output).
+  appSecretName: fastapi-react/dev-k8s/app
+
+ingress:
+  className: alb
+  alb:
+    # Set with --set ingress.alb.certificateArn=... if you have an ACM
+    # certificate for a domain you own; without it the ALB serves HTTP only.
+    certificateArn: ""
+
+topologySpread:
+  zones: true

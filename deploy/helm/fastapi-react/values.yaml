@@ -1,0 +1,134 @@
+# Defaults shared by every environment. The per-environment files only change
+# WIRING (where images, the database and secrets come from; which ingress
+# controller) -- never behaviour. What was proven on the local cluster is what
+# runs on EKS. See docs/ARCHITECTURE.md §17.1.
+#
+#   values-local.yaml  kind (Docker Desktop or standalone)
+#   values-ci.yaml     overlay on values-local.yaml for a GitHub Actions runner
+#   values-eks.yaml    EKS validation run
+
+image:
+  # Images are "<registry>/backend:<tag>" and "<registry>/frontend:<tag>" --
+  # the same names docker-compose.yml builds and the ECR module creates.
+  registry: ""
+  # Always a git SHA: sha-$(git rev-parse HEAD). Required; never "latest".
+  tag: ""
+  # Safe because tags are immutable SHAs (§20): a node's cached copy of
+  # sha-abc123 can never be stale.
+  pullPolicy: IfNotPresent
+
+# Non-secret configuration -> ConfigMap -> env of every backend-image container.
+config:
+  DEBUG: "false"
+  # Service name of the in-chart Redis (templates/redis.yaml).
+  CELERY_BROKER_URL: redis://redis:6379/0
+
+# Secrets, used only when externalSecret.enabled is false (the local cluster).
+#
+# NEVER put values here or in any committed values file. scripts/k8s/deploy-local.sh
+# generates them once into deploy/kind/secrets.local.yaml (gitignored) and passes
+# that file with -f. They must stay stable across upgrades: SECRET_KEY signs the
+# JWTs, and Postgres keeps the password it was initialised with on its volume.
+#
+# Empty keys are left out of the Secret entirely rather than rendered as "".
+# The broken-config drill (§18.2) relies on that: --set secrets.SECRET_KEY=
+# removes the variable and the backend crashes with KeyError: 'SECRET_KEY'.
+secrets:
+  SECRET_KEY: ""
+  POSTGRES_PASSWORD: ""
+
+# In-chart Postgres (templates/postgres.yaml). Local only; on EKS the database
+# is RDS and this is false. §17.2 explains the split.
+postgresql:
+  enabled: false
+  image: postgres:16-alpine
+  user: postgres
+  database: postgres
+  storage: 1Gi
+  # "" = the cluster's default StorageClass (kind: rancher local-path).
+  storageClassName: ""
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+
+# External database, used when postgresql.enabled is false.
+database:
+  host: ""
+  port: 5432
+  name: app
+
+# In-chart Redis (templates/redis.yaml). A Celery broker only -- no durable
+# state, so no volume. Both environments; §17.2.
+redis:
+  enabled: true
+  image: redis:7-alpine
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+# Secrets from AWS Secrets Manager via External Secrets Operator (EKS).
+# The operator itself is installed by terraform/environments/dev-k8s/platform.
+externalSecret:
+  enabled: false
+  refreshInterval: 1h
+  region: us-east-1
+  # Name of the app secret Terraform created empty (holds SECRET_KEY).
+  appSecretName: ""
+  # ARN of the RDS-managed master user secret (holds username and password).
+  dbSecretName: ""
+
+backend:
+  replicaCount: 2
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    # No CPU limit: a CPU limit throttles, a request already guarantees a
+    # share. The memory limit stays -- exceeding it is an OOM kill, not a slowdown.
+    limits: { memory: 512Mi }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    enabled: true
+    minAvailable: 1
+
+worker:
+  replicaCount: 1
+  concurrency: 2
+  resources:
+    requests: { cpu: 50m, memory: 192Mi }
+    limits: { memory: 384Mi }
+
+web:
+  replicaCount: 2
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { memory: 128Mi }
+  pdb:
+    enabled: true
+    minAvailable: 1
+
+# Alembic, as a Helm hook Job (templates/migrate-job.yaml).
+migrate:
+  args: ["alembic", "upgrade", "head"]
+  backoffLimit: 3
+  # Hard ceiling, including the wait for the database to accept connections.
+  activeDeadlineSeconds: 300
+
+ingress:
+  enabled: true
+  # "traefik" locally, "alb" on EKS. Anything else gets no controller-specific
+  # annotations.
+  className: ""
+  # "" = match any host, so http://localhost/ works locally.
+  host: ""
+  annotations: {}
+  alb:
+    # ACM certificate ARN. Empty = HTTP only on port 80.
+    certificateArn: ""
+
+topologySpread:
+  # Also spread replicas across availability zones. Meaningless on a
+  # single-machine cluster; on for EKS.
+  zones: false

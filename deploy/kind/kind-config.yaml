@@ -1,0 +1,29 @@
+# Standalone kind cluster -- the portable alternative to Docker Desktop's
+# built-in kind cluster, and what CI uses (docs/ARCHITECTURE.md §16.3, §19.4).
+#
+#   kind create cluster --name fastapi-react --config deploy/kind/kind-config.yaml
+#   scripts/k8s/addons.sh
+#
+# One control plane + two workers: anti-affinity, PodDisruptionBudgets and
+# `kubectl drain` need more than one schedulable node to show anything.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    # Traefik binds hostPorts 80/443 on this node (scripts/k8s/addons.sh);
+    # these map them to the host so http://localhost/ reaches the ingress.
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+  - role: worker
+  - role: worker

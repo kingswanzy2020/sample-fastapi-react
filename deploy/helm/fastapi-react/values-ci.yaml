@@ -1,0 +1,21 @@
+# Overlay on values-local.yaml for the chart-test job on a GitHub Actions
+# runner (§19.4): one replica of everything, no autoscaling, no ingress
+# controller to route through.
+#
+#   -f values-local.yaml -f values-ci.yaml
+
+backend:
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  # minAvailable: 1 with a single replica would block every eviction.
+  pdb:
+    enabled: false
+
+web:
+  replicaCount: 1
+  pdb:
+    enabled: false
+
+ingress:
+  enabled: false

@@ -1,0 +1,60 @@
+{{- /*
+Celery worker, same image as the backend and the same command as the compose
+"worker" service.
+
+No probes. A Celery worker serves no HTTP, and `celery inspect ping` as a
+liveness probe round-trips through the broker -- so it would fail, and restart
+every worker, whenever Redis blips. That is the liveness-checks-a-dependency
+mistake §17.3 warns about. A worker that loses Redis retries on its own.
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  labels:
+    {{- include "fastapi-react.componentLabels" (dict "ctx" . "component" "worker") | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "fastapi-react.selectorLabels" (dict "ctx" . "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fastapi-react.componentLabels" (dict "ctx" . "component" "worker") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "fastapi-react.fullname" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "fastapi-react.appPodSecurityContext" . | nindent 8 }}
+      # Celery's warm shutdown finishes the task in hand before exiting.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: {{ include "fastapi-react.image" (dict "ctx" . "name" "backend") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - celery
+            - --app
+            - app.tasks
+            - worker
+            - --loglevel=INFO
+            - -Q
+            - main-queue
+            - -c
+            - {{ .Values.worker.concurrency | quote }}
+          securityContext:
+            {{- include "fastapi-react.appContainerSecurityContext" . | nindent 12 }}
+          envFrom:
+            {{- include "fastapi-react.appEnvFrom" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

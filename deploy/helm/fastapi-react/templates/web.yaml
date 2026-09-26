@@ -1,0 +1,73 @@
+{{- /*
+The React bundle, served by nginx from frontend/Dockerfile's production target.
+Its nginx.conf also proxies /api to http://backend:8888, so the app works
+even without the ingress's /api rule (and with `kubectl port-forward svc/web`).
+
+Not hardened like the backend: the image is stock nginx, whose master process
+starts as root to bind port 80. Moving to nginxinc/nginx-unprivileged on 8080
+is a Dockerfile change, left for later.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  labels:
+    {{- include "fastapi-react.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "fastapi-react.selectorLabels" (dict "ctx" . "component" "web") | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  labels:
+    {{- include "fastapi-react.componentLabels" (dict "ctx" . "component" "web") | nindent 4 }}
+spec:
+  replicas: {{ .Values.web.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  progressDeadlineSeconds: 120
+  selector:
+    matchLabels:
+      {{- include "fastapi-react.selectorLabels" (dict "ctx" . "component" "web") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fastapi-react.componentLabels" (dict "ctx" . "component" "web") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "fastapi-react.fullname" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      {{- include "fastapi-react.spreading" (dict "ctx" . "component" "web") | nindent 6 }}
+      containers:
+        - name: web
+          image: {{ include "fastapi-react.image" (dict "ctx" . "name" "frontend") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}

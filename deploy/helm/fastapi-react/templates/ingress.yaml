@@ -1,0 +1,60 @@
+{{- /*
+One Ingress for both environments; only the class and its annotations differ.
+Traefik locally, the AWS Load Balancer Controller (an ALB) on EKS.
+
+/api goes straight to the backend Service; everything else to the React
+bundle. Same single-origin layout as compose, so the frontend's relative /api
+paths keep working and CORS is never needed.
+*/ -}}
+{{- if .Values.ingress.enabled }}
+{{- $alb := eq .Values.ingress.className "alb" }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "fastapi-react.fullname" . }}
+  labels:
+    {{- include "fastapi-react.labels" . | nindent 4 }}
+  {{- if or $alb .Values.ingress.annotations }}
+  annotations:
+    {{- if $alb }}
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # Route to pod IPs directly, not through a NodePort: one hop fewer and
+    # per-pod health checks.
+    alb.ingress.kubernetes.io/target-type: ip
+    {{- with .Values.ingress.alb.certificateArn }}
+    alb.ingress.kubernetes.io/certificate-arn: {{ . }}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    {{- else }}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    {{- end }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  rules:
+    - {{- with .Values.ingress.host }}
+      host: {{ . }}
+      {{- end }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  name: http
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+{{- end }}

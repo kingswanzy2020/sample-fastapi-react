@@ -1,0 +1,24 @@
+{{- /*
+Non-secret configuration and the pod identity every workload runs as.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fastapi-react.fullname" . }}-config
+  labels:
+    {{- include "fastapi-react.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+---
+# Nothing in the application talks to the Kubernetes API, so no pod needs a
+# token. A dedicated account (rather than "default") keeps it that way even if
+# someone later grants "default" permissions in this namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "fastapi-react.fullname" . }}
+  labels:
+    {{- include "fastapi-react.labels" . | nindent 4 }}
+automountServiceAccountToken: false

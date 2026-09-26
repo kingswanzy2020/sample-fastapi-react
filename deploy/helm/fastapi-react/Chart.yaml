@@ -1,0 +1,14 @@
+apiVersion: v2
+name: fastapi-react
+description: >-
+  FastAPI + React + Postgres + Celery. One chart for every environment: the
+  local kind cluster (values-local.yaml), CI (values-ci.yaml) and EKS
+  (values-eks.yaml). See docs/ARCHITECTURE.md §16-22.
+type: application
+
+# Chart version: bump when the templates change.
+version: 0.1.0
+
+# Not used to pick images -- image.tag (a git SHA, set at deploy time) does
+# that. Kept at the chart version so `helm list` shows something sensible.
+appVersion: "0.1.0"
