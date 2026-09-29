@@ -98,8 +98,13 @@
 
 # --- configuration ----------------------------------------------------------
 
+# Tags on include_tasks select only the include itself; `apply` is what passes
+# them to the included tasks, without it `--tags deploy` runs none of them.
 - name: Resolve secrets and registry
-  ansible.builtin.include_tasks: secrets.yml
+  ansible.builtin.include_tasks:
+    file: secrets.yml
+    apply:
+      tags: [app, config, deploy]
   tags: [app, config, deploy]
 
 - name: Render the environment file
@@ -146,5 +151,8 @@
 # --- deploy -----------------------------------------------------------------
 
 - name: Deploy the application
-  ansible.builtin.include_tasks: deploy.yml
+  ansible.builtin.include_tasks:
+    file: deploy.yml
+    apply:
+      tags: [app, deploy]
   tags: [app, deploy]
