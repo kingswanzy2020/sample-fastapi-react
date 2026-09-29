@@ -70,8 +70,9 @@ variable "kubernetes_version" {
 variable "endpoint_public_access_cidrs" {
   description = <<-EOT
     Who may reach the Kubernetes API endpoint (IAM auth still applies). Set to
-    your own /32 in terraform.tfvars for the session; GitHub-hosted runners
-    need 0.0.0.0/0 or a self-hosted runner.
+    your own /32 for the session in a gitignored *.auto.tfvars file, not the
+    committed terraform.tfvars; GitHub-hosted runners need 0.0.0.0/0 or a
+    self-hosted runner.
   EOT
   type        = list(string)
   default     = ["0.0.0.0/0"]

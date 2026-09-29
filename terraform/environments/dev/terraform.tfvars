@@ -32,13 +32,22 @@ root_volume_size = 30
 # Access is via SSM Session Manager: no open port 22, no key to distribute, and
 # every session logged to CloudTrail.
 #
-# To use SSH instead, set BOTH:
-#   key_name          = "my-keypair"
-#   ssh_allowed_cidrs = ["203.0.113.4/32"]   # curl -s https://checkip.amazonaws.com
+# Ansible connects over SSH, so port 22 is open as well. Ansible over SSM
+# would need the community.aws.aws_ssm plugin, an S3 transfer bucket and an
+# instance-role policy for it (the role has SSM core, ECR read and two
+# secrets -- not S3), so SSH is the simpler of the two. SSM still works.
+key_name = "ansible-keypair"
+
+# ssh_allowed_cidrs is deliberately NOT set here: it is your own public IP,
+# and this file is committed. Put it in ssh.auto.tfvars next to this file --
+# gitignored, and loaded automatically after this one:
 #
-# 0.0.0.0/0 here is rejected by a validation rule in the compute module.
-key_name          = null
-ssh_allowed_cidrs = []
+#   cp ssh.auto.tfvars.example ssh.auto.tfvars
+#   # then set your address: curl -s https://checkip.amazonaws.com
+#
+# Without that file it defaults to [] and port 22 stays closed. 0.0.0.0/0 is
+# rejected by a validation rule in the compute module. To go back to SSM-only,
+# set key_name = null and delete ssh.auto.tfvars.
 
 app_allowed_cidrs = ["0.0.0.0/0"]
 enable_https      = false # nothing terminates TLS on the box yet
@@ -84,3 +93,4 @@ db_backup_retention_period = 7
 db_deletion_protection     = false # dev is disposable; prod is not
 db_skip_final_snapshot     = true
 db_apply_immediately       = true
+

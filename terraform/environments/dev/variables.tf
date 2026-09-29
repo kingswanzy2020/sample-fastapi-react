@@ -97,7 +97,8 @@ variable "ssh_allowed_cidrs" {
     CIDRs allowed on port 22. Default is empty: SSM Session Manager needs no
     open port and no key, and the instance profile already permits it.
 
-    To use SSH, set this to your own address:
+    To use SSH, set this to your own address in ssh.auto.tfvars (gitignored;
+    see ssh.auto.tfvars.example), not in the committed terraform.tfvars:
       curl -s https://checkip.amazonaws.com
   EOT
   type        = list(string)

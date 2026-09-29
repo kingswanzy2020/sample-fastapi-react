@@ -23,7 +23,8 @@ private_subnet_cidrs = ["10.30.16.0/20", "10.30.32.0/20"] # sized for pod IPs
 #   aws eks describe-cluster-versions --status STANDARD_SUPPORT --query 'clusterVersions[].clusterVersion'
 kubernetes_version = "1.34"
 
-# Narrow to your own address for the session (IAM auth applies either way):
+# Narrow to your own address for the session (IAM auth applies either way) in
+# a gitignored endpoint.auto.tfvars -- this file is committed, so no real IPs:
 #   endpoint_public_access_cidrs = ["203.0.113.4/32"]   # curl -s https://checkip.amazonaws.com
 endpoint_public_access_cidrs = ["0.0.0.0/0"]
 

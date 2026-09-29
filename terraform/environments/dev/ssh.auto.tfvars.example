@@ -1,0 +1,8 @@
+# Copy to ssh.auto.tfvars (gitignored) and put your own public address in it:
+#
+#   curl -s https://checkip.amazonaws.com
+#
+# Terraform loads *.auto.tfvars automatically, after terraform.tfvars. Kept out
+# of git because it is your IP. Re-apply when your address changes, or Ansible
+# and ssh will time out at the security group.
+ssh_allowed_cidrs = ["203.0.113.4/32"]

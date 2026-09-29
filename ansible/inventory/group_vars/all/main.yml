@@ -16,14 +16,15 @@ project: fastapi-react
 # ---------------------------------------------------------------------------
 # Connection
 #
-# terraform/environments/dev/terraform.tfvars ships with ssh_allowed_cidrs = []
-# and key_name = null, i.e. SSH is CLOSED and access is via SSM Session Manager.
-# Ansible therefore needs one of these two, and neither is free:
+# Port 22 is closed unless ssh_allowed_cidrs is set, and SSM Session Manager
+# works either way. Ansible needs one of these two, and neither is free:
 #
-#   A. SSH  -- set both in terraform.tfvars and re-apply:
-#        key_name          = "your-keypair"
-#        ssh_allowed_cidrs = ["$(curl -s https://checkip.amazonaws.com)/32"]
-#      Then leave the settings below as they are.
+#   A. SSH  -- what dev uses. key_name is set in
+#      terraform/environments/dev/terraform.tfvars; your address goes in the
+#      gitignored ssh.auto.tfvars beside it (copy ssh.auto.tfvars.example).
+#      Write the literal address, e.g. ["203.0.113.4/32"] -- Terraform does not
+#      run shell commands, so "$(curl ...)" is rejected as an invalid CIDR.
+#      Re-apply, then leave the settings below as they are.
 #
 #   B. SSM  -- no open port, but the community.aws.aws_ssm connection plugin
 #      needs an S3 bucket for file transfer and an instance-role policy that
