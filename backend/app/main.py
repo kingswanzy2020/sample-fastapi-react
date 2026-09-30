@@ -31,6 +31,19 @@ async def root():
     return {"message": "Hello World"}
 
 
+@app.get("/api/v1/version")
+async def version():
+    """
+    The git commit this image was built from, baked in at build time
+    (backend/Dockerfile's GIT_SHA/BUILD_TIME build args). CD's smoke test
+    compares it to the commit it just deployed. docs/ARCHITECTURE.md §20.2.
+    """
+    return {
+        "version": os.getenv("GIT_SHA", "unknown"),
+        "built_at": os.getenv("BUILD_TIME", "unknown"),
+    }
+
+
 @app.get("/api/v1/task")
 async def example_task():
     celery_app.send_task("app.tasks.example_task", args=["Hello World"])

@@ -1,0 +1,228 @@
+# CD -- main only. docs/ARCHITECTURE.md §19.1, §19.5-19.6, §22.4.
+#
+#   test        ci.yml, in full. Nothing untested is pushed or deployed.
+#   build-push  both images to ECR as sha-<commit>, over OIDC (no keys)
+#   deploy      helm upgrade --atomic on EKS, then prove the new commit serves
+#
+# build-push and deploy are GATED on the repository variable EKS_ENABLED.
+# ECR and the cluster exist only during an EKS validation session (§22): they
+# are created and destroyed together by terraform/environments/dev-k8s. With
+# EKS_ENABLED unset, a merge to main runs the tests and stops -- skipped, not
+# failed.
+#
+# Repository variables (Settings -> Secrets and variables -> Actions ->
+# Variables), all printed with real values by
+#   terraform -chdir=terraform/environments/dev-k8s/cluster output -raw github_actions_setup
+#
+#   EKS_ENABLED          "true" for the session, "false" at teardown
+#   AWS_REGION           us-east-1
+#   AWS_PUSH_ROLE_ARN    trusted for  repo:<owner>/<repo>:ref:refs/heads/main
+#   AWS_DEPLOY_ROLE_ARN  trusted for  repo:<owner>/<repo>:environment:dev
+#   HELM_SET_FLAGS       image.registry, database.host, externalSecret.dbSecretName
+#
+# None of them is a secret. They are variables rather than committed values
+# because they carry the AWS account ID.
+
+name: CD
+
+on:
+  push:
+    branches: [main]
+  # Deploy by hand during a session without an empty commit:
+  #   gh workflow run cd.yml --ref main
+  workflow_dispatch:
+
+permissions: {}
+
+# Merges queue behind each other rather than cancelling a push or deploy
+# half-way through.
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Naming conventions, not account-specific: <project>-<environment> in
+  # terraform/environments/dev-k8s/cluster.
+  CLUSTER_NAME: fastapi-react-dev-k8s
+  ECR_REPOSITORY_PREFIX: fastapi-react-dev-k8s
+  NAMESPACE: fastapi-react
+  RELEASE: fastapi-react
+  CHART: deploy/helm/fastapi-react
+  HELM_VERSION: "v3.20.2"
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  # -------------------------------------------------------------------------
+  build-push:
+    needs: test
+    # The push role trusts refs/heads/main only; from any other ref the
+    # credentials step would fail, so skip instead.
+    if: vars.EKS_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write # request the GitHub OIDC token
+    strategy:
+      matrix:
+        include:
+          - image: backend
+            target: ""
+          - image: frontend
+            target: production
+    env:
+      TAG: sha-${{ github.sha }}
+      IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_PUSH_ROLE_ARN }}
+          role-session-name: gha-push-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+        id: ecr
+
+      # Tags are IMMUTABLE (§20.1): pushing sha-<commit> a second time fails.
+      # A re-run, or a workflow_dispatch of a commit already pushed this
+      # session, finds it here and goes straight to deploy.
+      - name: Already in ECR?
+        id: exists
+        run: |
+          if out="$(aws ecr describe-images --repository-name "$ECR_REPOSITORY_PREFIX/$IMAGE" \
+                      --image-ids imageTag="$TAG" 2>&1)"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "$IMAGE:$TAG already pushed"
+          elif grep -q ImageNotFoundException <<<"$out"; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$out"; exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: steps.exists.outputs.skip == 'false'
+
+      # Only the SHA tag. No `latest`: nothing may deploy it, and an
+      # IMMUTABLE repository would refuse the second push of it anyway.
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        if: steps.exists.outputs.skip == 'false'
+        id: meta
+        with:
+          images: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_PREFIX }}/${{ matrix.image }}
+          flavor: latest=false
+          tags: type=sha,format=long
+
+      - name: Build and push
+        if: steps.exists.outputs.skip == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./${{ matrix.image }}
+          target: ${{ matrix.target }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          # OCI labels, including org.opencontainers.image.revision = the SHA.
+          labels: ${{ steps.meta.outputs.labels }}
+          # What /api/v1/version reports. BUILD_TIME is the same timestamp
+          # metadata-action puts in the org.opencontainers.image.created label.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+          # Shares ci.yml's cache scopes: the test run just built these layers.
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+          # A plain single-platform manifest rather than an index with an
+          # attestation: the untagged-image lifecycle rule stays simple.
+          provenance: false
+
+  # -------------------------------------------------------------------------
+  deploy:
+    needs: build-push
+    if: vars.EKS_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The OIDC subject becomes repo:<owner>/<repo>:environment:dev -- the
+    # deploy role trusts exactly that. The environment's deployment branch
+    # policy (main only) is what keeps other branches out.
+    environment: dev
+    # Never two deploys at once: interleaved Helm revisions are unrecoverable
+    # by reading `helm history`.
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: sha-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: gha-deploy-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: kubeconfig
+        run: aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+
+      # No --create-namespace: the deploy role can act only inside the
+      # namespace, which terraform/environments/dev-k8s/platform creates.
+      # HELM_SET_FLAGS goes through env and an array, never pasted into the
+      # script, so its contents are data rather than shell.
+      - name: Deploy
+        env:
+          HELM_SET_FLAGS: ${{ vars.HELM_SET_FLAGS }}
+        run: |
+          [ -n "$HELM_SET_FLAGS" ] || { echo "::error::HELM_SET_FLAGS is not set (terraform output github_actions_setup)"; exit 1; }
+          read -ra set_flags <<<"$HELM_SET_FLAGS"
+          helm upgrade --install "$RELEASE" "$CHART" \
+            -f "$CHART/values-eks.yaml" \
+            "${set_flags[@]}" \
+            --namespace "$NAMESPACE" \
+            --set image.tag="$TAG" \
+            --atomic --wait --timeout 10m
+
+      - name: Verify rollout
+        run: |
+          for d in backend web worker; do
+            kubectl rollout status "deployment/$d" -n "$NAMESPACE" --timeout=180s
+          done
+
+      # Through the real ALB. No --insecure and no fixed scheme: without an
+      # ACM certificate the ALB serves HTTP; with one, -L follows the redirect.
+      - name: Smoke test
+        run: |
+          for _ in $(seq 60); do
+            host="$(kubectl get ingress "$RELEASE" -n "$NAMESPACE" \
+                      -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
+            [ -n "$host" ] && break; sleep 5
+          done
+          [ -n "$host" ] || { echo "::error::the ingress never got an ALB hostname"; exit 1; }
+          echo "ALB: $host"
+
+          # A new ALB's DNS name can take a few minutes to resolve.
+          curl -fsSL --retry 30 --retry-delay 10 --retry-all-errors "http://$host/api/v1/health/ready"; echo
+          served="$(curl -fsSL "http://$host/api/v1/version" | jq -r .version)"
+          [ "$served" = "$GITHUB_SHA" ] || { echo "::error::serving $served, deployed $GITHUB_SHA"; exit 1; }
+          echo "serving $served" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          helm history "$RELEASE" -n "$NAMESPACE" || true
+          kubectl get pods,ingress,externalsecret -n "$NAMESPACE" -o wide || true
+          kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp | tail -40 || true

@@ -11,6 +11,7 @@
 - Perttier/Eslint (with Airbnb style guide)
 - Docker compose for easier development
 - Nginx as a reverse proxy to allow backend and frontend on the same port
+- GitHub Actions CI: lint, tests, image scan and a Helm install on a kind cluster on every pull request
 
 ## Development
 
@@ -117,6 +118,23 @@ docker-compose run frontend test
 ```
 
 This is the same as running npm test from within the frontend directory
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request, with no cloud credentials:
+
+- **lint** — black, `terraform fmt` + `validate` for every root, ansible-lint, and the Helm chart
+  (`scripts/k8s/validate.sh`)
+- **backend** — builds the backend image and runs pytest inside it against a fresh Postgres
+- **frontend** — eslint on the files the PR changes, jest, and the production image build
+- **chart-test** — installs the chart on a throwaway kind cluster, smoke-tests it, and checks that a
+  broken upgrade rolls itself back
+
+Both images are scanned with Trivy; findings go to the run summary and do not fail the build yet.
+
+`.github/workflows/cd.yml` runs on `main`. It always re-runs the checks above; pushing images to ECR and
+deploying to EKS happen only while the EKS validation environment exists (repository variable
+`EKS_ENABLED`). See `docs/ARCHITECTURE.md` §19.
 
 ## Logging
 

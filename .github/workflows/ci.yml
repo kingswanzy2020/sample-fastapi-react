@@ -1,0 +1,334 @@
+# CI -- every pull request, and the gate in front of every deploy.
+# docs/ARCHITECTURE.md §19.1-19.4.
+#
+#   lint        black, terraform fmt + validate, ansible-lint, the Helm chart
+#   backend     build the image, run pytest INSIDE it against Postgres, scan it
+#   frontend    eslint (changed files), jest, build the production image, scan it
+#   chart-test  a kind cluster: install the chart, smoke test it, force a
+#               failed upgrade and prove --atomic rolls it back
+#
+# No cloud credentials anywhere in this file: it runs on pull requests,
+# including from forks. cd.yml calls it with `workflow_call` before it pushes
+# or deploys anything, so nothing reaches AWS without passing all of this.
+
+name: CI
+
+on:
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels that PR's previous run. Called from cd.yml the
+# group is the commit and nothing is cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # One place for the tool versions CI pins. The image base versions (Python,
+  # Node) are NOT here: tests run in the images or on the Node the image uses.
+  BLACK_VERSION: "24.2.0"
+  ANSIBLE_LINT_VERSION: "26.9.0"
+  TERRAFORM_VERSION: "1.16.1"
+  HELM_VERSION: "v3.20.2"
+  TRIVY_IMAGE: aquasec/trivy:0.74.0
+
+jobs:
+  # -------------------------------------------------------------------------
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install linters
+        run: pip install "black==${BLACK_VERSION}" "ansible-lint==${ANSIBLE_LINT_VERSION}"
+
+      - name: black (backend/pyproject.toml, line length 80)
+        run: black --check --diff backend
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff terraform
+
+      # Every root module, with no backend and no AWS credentials: the same
+      # pre-session check §22.1 relies on. The plugin cache stops five roots
+      # downloading the AWS provider five times.
+      - name: terraform validate
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugins
+        run: |
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          find terraform -name versions.tf -not -path '*/modules/*' -not -path '*/.terraform/*' \
+            -exec dirname {} \; | sort | while read -r root; do
+            echo "::group::$root"
+            terraform -chdir="$root" init -backend=false -input=false -lockfile=readonly >/dev/null
+            terraform -chdir="$root" validate
+            echo "::endgroup::"
+          done
+
+      - name: ansible-lint (production profile, ansible/.ansible-lint)
+        working-directory: ansible
+        run: |
+          ansible-galaxy collection install -r requirements.yml -p ./.collections
+          ansible-lint
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # helm lint + helm template + kubeconform for local, ci and eks values.
+      # The same script operators run by hand; no cluster involved.
+      - name: Helm chart
+        run: scripts/k8s/validate.sh
+
+  # -------------------------------------------------------------------------
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      # A fresh container per run matters: conftest.py creates
+      # <DATABASE_URL>_test and asserts it does not already exist.
+      postgres:
+        image: postgres:16-alpine # docker-compose.yml's version
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # The tests run in the image that ships, not on a runner Python: the
+      # Python version is defined once, in backend/Dockerfile.
+      - name: Build backend image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./backend
+          load: true
+          tags: ci/backend:${{ github.sha }}
+          build-args: GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      # Throwaway values: this Postgres lives for the length of the job.
+      - name: pytest (inside the image)
+        run: |
+          docker run --rm --network host \
+            -e DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres \
+            -e SECRET_KEY=test-key-not-a-real-secret \
+            -e CELERY_BROKER_URL=redis://localhost:6379/0 \
+            "ci/backend:${GITHUB_SHA}" pytest -p no:cacheprovider
+
+      # REPORT-ONLY until the dependency debt is paid: python:3.8-slim is EOL
+      # and requirements.txt pins 2020-era packages, so a blocking scan would
+      # fail every PR. Change --exit-code 0 to 1 to make it a gate.
+      - name: Trivy (report only)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" \
+            image --quiet --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 0 --format table "ci/backend:${GITHUB_SHA}" | tee trivy.txt
+          { echo '### Trivy: backend image, fixable HIGH/CRITICAL'; echo '```';
+            awk '/^=+$/{print prev} /^Total:/{print} {prev=$0}' trivy.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  # -------------------------------------------------------------------------
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The merge commit plus its first parent (the base branch tip), so
+          # the eslint step can diff the PR's own changes.
+          fetch-depth: 2
+
+      # Nothing this job builds is published. cd.yml's push job builds its
+      # own images, and GitHub scopes caches by ref: a run on main never
+      # restores a cache a pull request wrote.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 # zizmor: ignore[cache-poisoning]
+        with:
+          node-version: "14" # frontend/Dockerfile's node:14-bullseye-slim
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+
+      # Only the files this PR adds or changes. The tree as a whole carries 59
+      # pre-existing airbnb errors (see frontend/Dockerfile), and a gate that
+      # is red on day one gets ignored. New code must be clean; a touched file
+      # must be cleaned. Delete the diff filter once the debt is paid.
+      - name: eslint (files changed in this PR)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          mapfile -t files < <(git diff --name-only --relative --diff-filter=ACMR "$BASE_SHA" HEAD -- src \
+                                 | grep -E '\.(ts|tsx|js|jsx)$' || true)
+          if [ ${#files[@]} -eq 0 ]; then echo "no frontend source changed"; exit 0; fi
+          printf 'linting %s\n' "${files[@]}"
+          npx eslint "${files[@]}"
+
+      - name: jest
+        run: npm test
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build production image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./frontend
+          target: production
+          load: true
+          tags: ci/frontend:${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+
+      # REPORT-ONLY, as for the backend: the nginx base is behind on fixes.
+      - name: Trivy (report only)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" \
+            image --quiet --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 0 --format table "ci/frontend:${GITHUB_SHA}" | tee trivy.txt
+          { echo '### Trivy: frontend image, fixable HIGH/CRITICAL'; echo '```';
+            awk '/^=+$/{print prev} /^Total:/{print} {prev=$0}' trivy.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  # -------------------------------------------------------------------------
+  # The chart on a real (kind) cluster, for free, on every PR. §19.4.
+  chart-test:
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NAMESPACE: fastapi-react
+      RELEASE: fastapi-react
+      CHART: deploy/helm/fastapi-react
+      KIND_CLUSTER: fastapi-react
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Same cache scopes as the jobs above, so these are cache hits. Named as
+      # values-local.yaml expects: fastapi-react/<image>:sha-<commit>.
+      - name: Build backend image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./backend
+          load: true
+          tags: fastapi-react/backend:sha-${{ github.sha }}
+          build-args: GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=backend
+
+      - name: Build frontend image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./frontend
+          target: production
+          load: true
+          tags: fastapi-react/frontend:sha-${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+
+      # One control plane + two workers, the same topology as locally.
+      - uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          config: deploy/kind/kind-config.yaml
+          cluster_name: ${{ env.KIND_CLUSTER }}
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Load images into kind
+        run: |
+          kind load docker-image --name "$KIND_CLUSTER" \
+            "fastapi-react/backend:sha-${GITHUB_SHA}" "fastapi-react/frontend:sha-${GITHUB_SHA}"
+
+      # Secrets generated per run; the cluster lives for minutes.
+      - name: Install
+        run: |
+          SECRET_KEY="$(openssl rand -hex 32)"; POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+          echo "::add-mask::$SECRET_KEY"; echo "::add-mask::$POSTGRES_PASSWORD"
+          helm upgrade --install "$RELEASE" "$CHART" \
+            -f "$CHART/values-local.yaml" -f "$CHART/values-ci.yaml" \
+            -n "$NAMESPACE" --create-namespace \
+            --set secrets.SECRET_KEY="$SECRET_KEY" \
+            --set secrets.POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+            --set image.tag="sha-${GITHUB_SHA}" \
+            --atomic --wait --timeout 6m
+          kubectl get pods -n "$NAMESPACE" -o wide
+
+      - name: Smoke test
+        run: |
+          kubectl -n "$NAMESPACE" port-forward svc/backend 8888:8888 >/dev/null 2>&1 &
+          kubectl -n "$NAMESPACE" port-forward svc/web 8080:80 >/dev/null 2>&1 &
+          api=http://localhost:8888/api
+
+          # Postgres and the Redis broker, from inside the cluster's network.
+          curl -fsS --retry 15 --retry-delay 2 --retry-all-errors "$api/v1/health/ready"; echo
+
+          # The image serving requests is the commit that was built (§20.2).
+          served="$(curl -fsS "$api/v1/version" | jq -r .version)"
+          [ "$served" = "$GITHUB_SHA" ] || { echo "::error::serving $served, built $GITHUB_SHA"; exit 1; }
+          echo "serving $served"
+
+          # Migrations ran (the post-install Job) and auth works end to end.
+          kubectl exec -n "$NAMESPACE" deploy/backend -- python app/initial_data.py
+          curl -fsS -d 'username=admin@test.com&password=admin' "$api/token" | jq -e .access_token >/dev/null
+          echo "login ok"
+
+          # The React bundle.
+          curl -fsS --retry 10 --retry-delay 2 --retry-all-errors -o /dev/null http://localhost:8080/
+          echo "web ok"
+
+      # Stage 8's Failure 2 (§18.2) as a regression test. If someone removes
+      # the readiness probe or maxUnavailable: 0, this fails.
+      - name: A bad upgrade must roll itself back
+        run: |
+          if helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" --reuse-values \
+               --set image.tag=sha-does-not-exist --atomic --wait --timeout 2m; then
+            echo "::error::an upgrade to a missing image succeeded"; exit 1
+          fi
+          helm history "$RELEASE" -n "$NAMESPACE"
+          kubectl rollout status deployment/backend -n "$NAMESPACE" --timeout=60s
+          image="$(kubectl get deploy backend -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          [ "$image" = "fastapi-react/backend:sha-${GITHUB_SHA}" ] \
+            || { echo "::error::after rollback backend runs $image"; exit 1; }
+          echo "rolled back to $image"
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get all,pvc,jobs -n "$NAMESPACE" -o wide || true
+          kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp | tail -40 || true
+          kubectl describe pods -n "$NAMESPACE" | tail -120 || true
+          kubectl logs -n "$NAMESPACE" -l app=backend --tail=80 --all-containers --prefix || true
+          helm history "$RELEASE" -n "$NAMESPACE" || true
