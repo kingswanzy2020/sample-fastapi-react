@@ -34,6 +34,9 @@ node_desired_size   = 2
 node_max_size       = 4
 
 # --- database --------------------------------------------------------------
-db_instance_class = "db.t4g.micro"
+# db.t3.micro, not db.t4g.micro: in this account RDS offers t4g.micro only in
+# us-east-1c and us-east-1f, and the subnets above are in 1a and 1b. Check with
+# `aws rds describe-orderable-db-instance-options` before changing either.
+db_instance_class = "db.t3.micro"
 db_name           = "app"     # = database.name in values-eks.yaml
 db_username       = "appuser" # "postgres" is reserved by RDS

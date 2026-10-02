@@ -17,3 +17,8 @@ output "verify_commands" {
     kubectl -n external-secrets get sa external-secrets -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}'; echo
   EOT
 }
+
+output "app_namespace" {
+  description = "Namespace the chart deploys into; GitHub Actions' deploy role is confined to it."
+  value       = kubernetes_namespace_v1.app.metadata[0].name
+}

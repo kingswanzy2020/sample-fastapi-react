@@ -12,6 +12,11 @@ terraform {
       source  = "hashicorp/helm"
       version = "~> 2.17"
     }
+    # The app namespace and the CI deployers' RBAC (main.tf).
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 3.2"
+    }
   }
 
   # Same partial backend as ../cluster, its own key.

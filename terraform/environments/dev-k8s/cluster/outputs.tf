@@ -48,13 +48,39 @@ output "db_endpoint" {
 
 # The account-specific values the chart needs, as --set flags, so that
 # values-eks.yaml in git carries no account ID, ARN or hostname.
-output "helm_set_flags" {
-  description = "Pass to helm: helm upgrade ... -f values-eks.yaml $(terraform output -raw helm_set_flags)"
-  value = join(" ", [
+locals {
+  helm_set_flags = join(" ", [
     "--set image.registry=${module.ecr.registry_prefix}",
     "--set database.host=${module.database.address}",
     "--set externalSecret.dbSecretName=${module.database.master_user_secret_arn}",
   ])
+}
+
+output "helm_set_flags" {
+  description = "Pass to helm: helm upgrade ... -f values-eks.yaml $(terraform output -raw helm_set_flags)"
+  value       = local.helm_set_flags
+}
+
+# ---------------------------------------------------------------------------
+# GitHub Actions (github-actions.tf, .github/workflows/cd.yml)
+# ---------------------------------------------------------------------------
+
+output "github_role_arns" {
+  description = "Roles cd.yml assumes over OIDC: push (ECR) and deploy (EKS, one namespace)."
+  value       = { for k, v in aws_iam_role.github : k => v.arn }
+}
+
+# Repository VARIABLES, not secrets: none of these is a credential. They carry
+# the account ID, which is why they live in GitHub settings rather than git.
+output "github_actions_setup" {
+  description = "Run from the repo root once the platform root is applied: turns cd.yml's push and deploy jobs on."
+  value       = <<-EOT
+    gh variable set AWS_REGION          --body '${var.aws_region}'
+    gh variable set AWS_PUSH_ROLE_ARN   --body '${aws_iam_role.github["push"].arn}'
+    gh variable set AWS_DEPLOY_ROLE_ARN --body '${aws_iam_role.github["deploy"].arn}'
+    gh variable set HELM_SET_FLAGS      --body '${local.helm_set_flags}'
+    gh variable set EKS_ENABLED         --body true
+  EOT
 }
 
 # ---------------------------------------------------------------------------
@@ -87,22 +113,33 @@ output "next_steps" {
     4. PUSH IMAGES  (from the repo root; ECR was created empty this session)
          ${module.ecr.docker_login_command}
          TAG=sha-$(git rev-parse HEAD)
-         docker build -t ${module.ecr.registry_prefix}/backend:$TAG  ./backend
+         docker build -t ${module.ecr.registry_prefix}/backend:$TAG \
+           --build-arg GIT_SHA=$(git rev-parse HEAD) \
+           --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) ./backend
          docker build -t ${module.ecr.registry_prefix}/frontend:$TAG --target production ./frontend
          docker push ${module.ecr.registry_prefix}/backend:$TAG
          docker push ${module.ecr.registry_prefix}/frontend:$TAG
 
-    5. DEPLOY THE CHART  (from the repo root)
+    5. DEPLOY THE CHART  (from the repo root; TAG is set again so this step
+       also works in a new shell -- an empty tag fails with "image.tag is required")
+         TAG=sha-$(git rev-parse HEAD)
          helm upgrade --install fastapi-react deploy/helm/fastapi-react \
            -f deploy/helm/fastapi-react/values-eks.yaml \
            $(terraform -chdir=terraform/environments/dev-k8s/cluster output -raw helm_set_flags) \
            --set image.tag=$TAG \
            -n fastapi-react --create-namespace --atomic --wait --timeout 10m
 
+       ...or, instead of 4 and 5, let CI do both over OIDC (.github/workflows/cd.yml):
+         terraform output -raw github_actions_setup | bash
+         gh workflow run cd.yml --ref main && gh run watch
+       then seed the superuser once:
+         kubectl exec -n fastapi-react deploy/backend -- python app/initial_data.py
+
     6. VALIDATE  -- docs/ARCHITECTURE.md §22.5
 
     ── Tear down, in this order (§22.6) ───────────────────────────────────
 
+         gh variable set EKS_ENABLED --body false        # stop cd.yml pushing/deploying into nothing
          helm uninstall fastapi-react -n fastapi-react   # the controller deletes the ALB
          kubectl get ingress -A                          # wait until empty
          cd ../platform && terraform destroy

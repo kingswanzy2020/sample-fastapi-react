@@ -30,6 +30,7 @@ DOWNGRADE: re-narrowing the varchars fails if any stored value is longer
 than the old limit, and the dropped ``address`` column comes back empty --
 its data is not recoverable.
 """
+
 from alembic import op
 import sqlalchemy as sa
 

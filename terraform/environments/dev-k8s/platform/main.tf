@@ -127,3 +127,65 @@ resource "helm_release" "external_secrets" {
   # webhook Services are created.
   depends_on = [helm_release.lb_controller]
 }
+
+# ---------------------------------------------------------------------------
+# The application namespace, and what CI may do in it
+#
+# ../cluster admits GitHub Actions' deploy role to the cluster as a member of
+# var.deployers_group and nothing more. This is where that group gets its
+# permissions: everything, but only inside the app namespace. The chart's
+# ExternalSecret and SecretStore are CRDs, which is why this is a hand-written
+# Role rather than the built-in "admin" ClusterRole or an EKS access policy.
+#
+# The namespace exists before the first deploy because the deploy role cannot
+# create namespaces -- cd.yml runs helm without --create-namespace.
+# ---------------------------------------------------------------------------
+
+provider "kubernetes" {
+  host                   = data.aws_eks_cluster.this.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    args        = ["eks", "get-token", "--cluster-name", local.cluster_name, "--region", var.aws_region]
+  }
+}
+
+resource "kubernetes_namespace_v1" "app" {
+  metadata {
+    name = var.app_namespace
+  }
+}
+
+resource "kubernetes_role_v1" "deployer" {
+  metadata {
+    name      = "ci-deployer"
+    namespace = kubernetes_namespace_v1.app.metadata[0].name
+  }
+
+  rule {
+    api_groups = ["*"]
+    resources  = ["*"]
+    verbs      = ["*"]
+  }
+}
+
+resource "kubernetes_role_binding_v1" "deployer" {
+  metadata {
+    name      = "ci-deployer"
+    namespace = kubernetes_namespace_v1.app.metadata[0].name
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role_v1.deployer.metadata[0].name
+  }
+
+  subject {
+    kind      = "Group"
+    name      = var.deployers_group
+    api_group = "rbac.authorization.k8s.io"
+  }
+}

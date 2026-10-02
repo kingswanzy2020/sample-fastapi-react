@@ -3,6 +3,11 @@ output "cluster_name" {
   value       = module.cluster.cluster_name
 }
 
+output "cluster_arn" {
+  description = "EKS cluster ARN. Scopes eks:DescribeCluster for CI."
+  value       = module.cluster.cluster_arn
+}
+
 output "cluster_endpoint" {
   description = "Kubernetes API endpoint."
   value       = module.cluster.cluster_endpoint

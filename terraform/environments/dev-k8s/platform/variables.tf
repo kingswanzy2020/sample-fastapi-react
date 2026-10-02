@@ -31,3 +31,15 @@ variable "external_secrets_chart_version" {
   type        = string
   default     = "2.11.0"
 }
+
+variable "app_namespace" {
+  description = "Namespace the application chart is installed into. cd.yml deploys here and nowhere else."
+  type        = string
+  default     = "fastapi-react"
+}
+
+variable "deployers_group" {
+  description = "Kubernetes group GitHub Actions' deploy role joins. Must match github_deployers_group in ../cluster."
+  type        = string
+  default     = "fastapi-react-deployers"
+}

@@ -58,7 +58,7 @@ kubectl get svc -n traefik traefik
 cat <<EOF
 
 Add-ons installed. Next:
-  scripts/k8s/preflight.sh      # confirm the nodes can see locally built images
+  scripts/k8s/preflight.sh      # confirm the nodes can pull locally built images
   scripts/k8s/deploy-local.sh   # build, load and deploy the app
 
 If EXTERNAL-IP above stays <pending> on Docker Desktop, reach the ingress with:

@@ -123,3 +123,34 @@ variable "db_username" {
   type        = string
   default     = "appuser"
 }
+
+# ---------------------------------------------------------------------------
+# GitHub Actions (github-actions.tf)
+# ---------------------------------------------------------------------------
+
+variable "github_repository" {
+  description = "owner/repo whose workflows may assume the CI roles. Case must match GitHub's."
+  type        = string
+  default     = "kingswanzy2020/sample-fastapi-react"
+}
+
+variable "github_deploy_environment" {
+  description = "GitHub environment cd.yml's deploy job runs in. Must match `environment:` there."
+  type        = string
+  default     = "dev"
+}
+
+variable "github_deployers_group" {
+  description = "Kubernetes group the deploy role joins. Must match deployers_group in ../platform."
+  type        = string
+  default     = "fastapi-react-deployers"
+}
+
+variable "create_github_oidc_provider" {
+  description = <<-EOT
+    Create the account's GitHub OIDC provider. An account holds one per URL, so
+    set false if another project already created it -- it is then looked up.
+  EOT
+  type        = bool
+  default     = true
+}

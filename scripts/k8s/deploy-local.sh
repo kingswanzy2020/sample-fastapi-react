@@ -43,13 +43,19 @@ FRONTEND_IMAGE="fastapi-react/frontend:$TAG"
 
 # --- build and load ----------------------------------------------------------
 if $build; then
-  docker build -t "$BACKEND_IMAGE" ./backend
+  # GIT_SHA is what /api/v1/version reports (§20.2) -- the commit, even when
+  # the tag says -dirty.
+  docker build -t "$BACKEND_IMAGE" \
+    --build-arg GIT_SHA="$(git rev-parse HEAD)" \
+    --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    ./backend
   docker build -t "$FRONTEND_IMAGE" --target production ./frontend
   if [ "$CLUSTER_KIND" = kind ]; then
     kind load docker-image "$BACKEND_IMAGE" "$FRONTEND_IMAGE" --name "$KIND_CLUSTER"
   fi
-  # Docker Desktop: scripts/k8s/preflight.sh confirms the nodes already see
-  # images from `docker build`.
+  # Docker Desktop: nothing to load. The nodes pull from the Docker Engine's
+  # image store on demand, which the chart's IfNotPresent pull policy allows;
+  # scripts/k8s/preflight.sh checks that they can.
 elif ! docker image inspect "$BACKEND_IMAGE" >/dev/null 2>&1; then
   die "--skip-build, but $BACKEND_IMAGE does not exist"
 fi
