@@ -50,8 +50,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Two environments: ansible-lint depends on a newer black than the one
+      # the backend is formatted with, so pip cannot resolve both into one.
       - name: Install linters
-        run: pip install "black==${BLACK_VERSION}" "ansible-lint==${ANSIBLE_LINT_VERSION}"
+        run: |
+          pip install "black==${BLACK_VERSION}"
+          python -m venv "$RUNNER_TEMP/ansible-lint"
+          "$RUNNER_TEMP/ansible-lint/bin/pip" install "ansible-lint==${ANSIBLE_LINT_VERSION}"
 
       - name: black (backend/pyproject.toml, line length 80)
         run: black --check --diff backend
@@ -83,6 +88,7 @@ jobs:
       - name: ansible-lint (production profile, ansible/.ansible-lint)
         working-directory: ansible
         run: |
+          export PATH="$RUNNER_TEMP/ansible-lint/bin:$PATH"
           ansible-galaxy collection install -r requirements.yml -p ./.collections
           ansible-lint
 
