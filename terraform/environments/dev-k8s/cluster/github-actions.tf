@@ -29,9 +29,13 @@ locals {
     : data.aws_iam_openid_connect_provider.github[0].arn
   )
 
+  # "repo:<owner>/<repo>" unless the repository issues immutable subjects, which
+  # embed the owner and repository IDs (var.github_oidc_subject_prefix).
+  github_subject_prefix = coalesce(var.github_oidc_subject_prefix, "repo:${var.github_repository}")
+
   github_role_subjects = {
-    push   = "repo:${var.github_repository}:ref:refs/heads/main"
-    deploy = "repo:${var.github_repository}:environment:${var.github_deploy_environment}"
+    push   = "${local.github_subject_prefix}:ref:refs/heads/main"
+    deploy = "${local.github_subject_prefix}:environment:${var.github_deploy_environment}"
   }
 }
 
