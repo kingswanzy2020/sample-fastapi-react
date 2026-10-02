@@ -134,6 +134,18 @@ variable "github_repository" {
   default     = "kingswanzy2020/sample-fastapi-react"
 }
 
+variable "github_oidc_subject_prefix" {
+  description = <<-EOT
+    Prefix of the `sub` claim in this repository's GitHub OIDC tokens. Empty
+    means the name-based "repo:<owner>/<repo>". A repository that issues
+    immutable subjects embeds the owner and repository IDs instead, and the
+    roles' StringEquals trust then rejects the name-based form. Read the value:
+      gh api repos/<owner>/<repo>/actions/oidc/customization/sub -q .sub_claim_prefix
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "github_deploy_environment" {
   description = "GitHub environment cd.yml's deploy job runs in. Must match `environment:` there."
   type        = string

@@ -40,3 +40,8 @@ node_max_size       = 4
 db_instance_class = "db.t3.micro"
 db_name           = "app"     # = database.name in values-eks.yaml
 db_username       = "appuser" # "postgres" is reserved by RDS
+
+# --- GitHub Actions OIDC ---------------------------------------------------
+# This repository issues immutable subjects (owner and repository IDs), so the
+# roles must trust this prefix, not "repo:kingswanzy2020/sample-fastapi-react".
+github_oidc_subject_prefix = "repo:kingswanzy2020@84867045/sample-fastapi-react@1341885713"
