@@ -38,9 +38,13 @@ for env in local ci eks; do
 done
 
 # The ExternalSecret and SecretStore schemas come from the community CRD catalog.
-docker run --rm -v "$out:/rendered:ro" ghcr.io/yannh/kubeconform:v0.7.0 \
-  -strict -summary \
-  -kubernetes-version "$KUBERNETES_VERSION" \
-  -schema-location default \
-  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-  /rendered/local.yaml /rendered/ci.yaml /rendered/eks.yaml
+# The manifests go in on stdin, not a bind mount: Docker Desktop refuses to
+# mount host paths it does not share, and mktemp's /tmp is not one of them.
+for env in local ci eks; do
+  docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0 \
+    -strict -summary \
+    -kubernetes-version "$KUBERNETES_VERSION" \
+    -schema-location default \
+    -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+    - < "$out/$env.yaml" | sed "s/^/$env: /"
+done
