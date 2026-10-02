@@ -113,12 +113,16 @@ output "next_steps" {
     4. PUSH IMAGES  (from the repo root; ECR was created empty this session)
          ${module.ecr.docker_login_command}
          TAG=sha-$(git rev-parse HEAD)
-         docker build -t ${module.ecr.registry_prefix}/backend:$TAG --build-arg GIT_SHA=$(git rev-parse HEAD) ./backend
+         docker build -t ${module.ecr.registry_prefix}/backend:$TAG \
+           --build-arg GIT_SHA=$(git rev-parse HEAD) \
+           --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) ./backend
          docker build -t ${module.ecr.registry_prefix}/frontend:$TAG --target production ./frontend
          docker push ${module.ecr.registry_prefix}/backend:$TAG
          docker push ${module.ecr.registry_prefix}/frontend:$TAG
 
-    5. DEPLOY THE CHART  (from the repo root)
+    5. DEPLOY THE CHART  (from the repo root; TAG is set again so this step
+       also works in a new shell -- an empty tag fails with "image.tag is required")
+         TAG=sha-$(git rev-parse HEAD)
          helm upgrade --install fastapi-react deploy/helm/fastapi-react \
            -f deploy/helm/fastapi-react/values-eks.yaml \
            $(terraform -chdir=terraform/environments/dev-k8s/cluster output -raw helm_set_flags) \
