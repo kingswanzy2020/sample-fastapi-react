@@ -175,3 +175,9 @@ frontend
     ├── index.tsx   # entrypoint
     └── App.tsx     # handles routing
 ```
+
+## Write-up
+
+Full write-up — architecture diagram, the Terraform → Ansible → Helm path from a compose stack to
+EKS, and the failure drills showing a bad release never takes traffic — lives in my portfolio repo:
+**[Projects / kubernetes / fastapi-react-project](https://github.com/kingswanzy2020/Projects/tree/main/kubernetes/fastapi-react-project)**.
