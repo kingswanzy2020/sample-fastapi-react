@@ -73,6 +73,21 @@ module "cluster" {
     metrics-server = {}
   }
 
+  # The metrics-server add-on serves on 10251, which the module's default node
+  # rules do not open to the control plane. Without this the metrics API is
+  # registered but unreachable: the HPA shows <unknown>, and no namespace can
+  # finish deleting, because deletion waits on discovery of every API.
+  node_security_group_additional_rules = {
+    ingress_cluster_10251_metrics_server = {
+      description                   = "Cluster API to node 10251/tcp metrics-server"
+      protocol                      = "tcp"
+      from_port                     = 10251
+      to_port                       = 10251
+      type                          = "ingress"
+      source_cluster_security_group = true
+    }
+  }
+
   eks_managed_node_groups = {
     default = {
       instance_types = var.node_instance_types
