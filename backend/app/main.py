@@ -65,4 +65,4 @@ app.include_router(health_router, prefix="/api/v1", tags=["health"])
 
 if __name__ == "__main__":
     reload = os.getenv("DEBUG", "false").lower() == "true"
-    uvicorn.run("main:app", host="0.0.0.0", reload=reload, port=8888)
+    uvicorn.run("main:app", host="0.0.0.0", reload=reload, port=888888888)
