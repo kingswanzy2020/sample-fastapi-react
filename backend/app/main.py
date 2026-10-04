@@ -45,10 +45,9 @@ async def version():
 
 
 @app.get("/api/v1/task")
-async def example_task():
-    celery_app.send_task("app.tasks.example_task", args=["Hello World"])
+celery_app.send_task("app.tasks.example_task", args=["Hello World"])
 
-    return {"message": "success"}
+return {"message": "success"}
 
 
 # Routers
